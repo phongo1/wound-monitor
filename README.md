@@ -1,6 +1,6 @@
-# smart-bandage-monitor
+# smart-bandage
 
-Minimal capstone skeleton for:
+Monorepo for smart-bandage:
 
 - `firmware/` (ESP32 + TMP117 placeholders)
 - `backend/` (Express + TypeScript API)
