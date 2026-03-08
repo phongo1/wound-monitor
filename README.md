@@ -40,7 +40,7 @@ Opens a simple UI that fetches `GET /api/latest`.
 
 ### 3) Firmware
 
-Use `firmware/src/` as your starter code and fill in TODOs for:
+`firmware/src/`:
 
 - real TMP117 reads over I2C/Qwiic
 - real WiFi credentials handling
