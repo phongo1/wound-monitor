@@ -1,12 +1,14 @@
 #include <WiFi.h>
+#include <HTTPClient.h>
 #include <Wire.h>
 #include <SparkFun_TMP117.h>
 
 const char* ssid = "mineplex";
 const char* password = "ezpassword123";
+const char* backendUrl = "http://10.0.0.228:3000/api/readings";
 
-WiFiServer server(80);
 TMP117 sensor;
+const char* deviceId = "esp32-thing-plus-1";
 
 void setup() {
   Serial.begin(115200);
@@ -16,10 +18,12 @@ void setup() {
 
   if (!sensor.begin()) {
     Serial.println("Sensor not detected");
-    while (1);
+    while (1) {
+      delay(1000);
+      Serial.println("Still not detecting sensor...");
+    }
   }
 
-  // Connect to wifi
   Serial.print("Connecting to WiFi...");
   WiFi.begin(ssid, password);
 
@@ -29,29 +33,49 @@ void setup() {
   }
 
   Serial.println("\nConnected!");
-  Serial.print("IP Address: ");
+  Serial.print("ESP32 IP Address: ");
   Serial.println(WiFi.localIP());
-
-  server.begin();
 }
 
 void loop() {
-  WiFiClient client = server.available();
-
-  if (client) {
-    float tempF = sensor.readTempF();
-
-    client.println("HTTP/1.1 200 OK");
-    client.println("Content-type:text/html");
-    client.println();
-
-    client.println("<html><body>");
-    client.println("<h1>ESP32 Temperature</h1>");
-    client.print("<p>");
-    client.print(tempF);
-    client.println(" F</p>");
-    client.println("</body></html>");
-
-    client.stop();
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi disconnected");
+    delay(2000);
+    return;
   }
+
+  float tempC = sensor.readTempC();
+  float tempF = sensor.readTempF();
+
+  unsigned long timestamp = millis() / 1000;
+
+  HTTPClient http;
+  http.begin(backendUrl);
+  http.addHeader("Content-Type", "application/json");
+
+  String body = "{";
+  body += "\"device_id\":\"" + String(deviceId) + "\",";
+  body += "\"temperature_c\":" + String(tempC, 2) + ",";
+  body += "\"timestamp\":" + String(timestamp);
+  body += "}";
+
+  int httpResponseCode = http.POST(body);
+
+  Serial.print("TempF: ");
+  Serial.print(tempF);
+  Serial.print(" | TempC: ");
+  Serial.print(tempC);
+  Serial.print(" | POST status: ");
+  Serial.println(httpResponseCode);
+
+  if (httpResponseCode > 0) {
+    String response = http.getString();
+    Serial.println(response);
+  } else {
+    Serial.println("POST failed");
+  }
+
+  http.end();
+
+  delay(3000);
 }
