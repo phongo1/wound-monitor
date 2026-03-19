@@ -1,32 +1,57 @@
+#include <WiFi.h>
 #include <Wire.h>
 #include <SparkFun_TMP117.h>
 
+const char* ssid = "mineplex";
+const char* password = "ezpassword123";
+
+WiFiServer server(80);
 TMP117 sensor;
 
 void setup() {
   Serial.begin(115200);
   delay(2000);
-  Serial.println("Starting...");
 
-  Wire.begin(21, 22);   // ESP32 Thing Plus I2C pins
-
-  Serial.println("Trying to find sensor...");
+  Wire.begin(21, 22);
 
   if (!sensor.begin()) {
-    Serial.println("TMP117 not detected. Check wiring.");
-    while (1) {
-      delay(1000);
-      Serial.println("Still not detecting TMP117...");
-    }
+    Serial.println("Sensor not detected");
+    while (1);
   }
 
-  Serial.println("TMP117 Temperature Sensor Ready");
+  // Connect to wifi
+  Serial.print("Connecting to WiFi...");
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("\nConnected!");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
+
+  server.begin();
 }
 
 void loop() {
-  float temperature = sensor.readTempF();
-  Serial.print("Temperature: ");
-  Serial.print(temperature);
-  Serial.println(" F");
-  delay(1000);
+  WiFiClient client = server.available();
+
+  if (client) {
+    float tempF = sensor.readTempF();
+
+    client.println("HTTP/1.1 200 OK");
+    client.println("Content-type:text/html");
+    client.println();
+
+    client.println("<html><body>");
+    client.println("<h1>ESP32 Temperature</h1>");
+    client.print("<p>");
+    client.print(tempF);
+    client.println(" F</p>");
+    client.println("</body></html>");
+
+    client.stop();
+  }
 }
