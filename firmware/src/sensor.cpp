@@ -1,16 +1,32 @@
-#include "sensor.h"
+#include <Wire.h>
+#include <SparkFun_TMP117.h>
 
-// TODO: Add I2C + TMP117 library includes here (for SparkFun TMP117 over Qwiic).
-// Example later: initialize Wire and configure sensor in sensorInit().
+TMP117 sensor;
 
-bool sensorInit() {
-  // TODO: Implement real TMP117 initialization.
-  // Return true when sensor is detected and ready.
-  return true;
+void setup() {
+  Serial.begin(115200);
+  delay(2000);
+  Serial.println("Starting...");
+
+  Wire.begin(21, 22);   // ESP32 Thing Plus I2C pins
+
+  Serial.println("Trying to find sensor...");
+
+  if (!sensor.begin()) {
+    Serial.println("TMP117 not detected. Check wiring.");
+    while (1) {
+      delay(1000);
+      Serial.println("Still not detecting TMP117...");
+    }
+  }
+
+  Serial.println("TMP117 Temperature Sensor Ready");
 }
 
-float readTemperatureC() {
-  // TODO: Replace with real TMP117 temperature read.
-  // Placeholder for early end-to-end wiring tests.
-  return 36.7f;
+void loop() {
+  float temperature = sensor.readTempF();
+  Serial.print("Temperature: ");
+  Serial.print(temperature);
+  Serial.println(" F");
+  delay(1000);
 }
