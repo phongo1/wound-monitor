@@ -6,6 +6,7 @@ import {
     Thermometer,
 } from "lucide-react";
 import heroGraphic from "../../assets/landingPage.png";
+import React from "react";
 
 interface LandingPageProps {
     onGetStarted: () => void;
@@ -41,16 +42,16 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
 
             {/* Main Content */}
             <main className="flex-1 flex items-center">
-                <div className="mx-auto grid max-w-6xl gap-14 px-6 py-16 xl:grid-cols-[minmax(0,1.02fr)_minmax(0,0.98fr)] md:px-8">
+                <div className="mx-auto flex max-w-6xl flex-col gap-14 px-6 py-16 xl:flex-row xl:items-center xl:gap-20 md:px-8">
                     {/* Left: Content */}
-                    <div className="min-w-0 space-y-8">
+                    <div className="min-w-0 flex-1 space-y-8 xl:basis-[42%]">
                         <div className="inline-flex items-center gap-2 rounded-full border border-blue-100 bg-white/80 px-4 py-2 text-sm text-blue-700 shadow-sm shadow-blue-100/70">
                             <ShieldCheck className="w-4 h-4" />
                             Early alerts for infection risk
                         </div>
 
                         <div className="space-y-6">
-                            <h1 className="max-w-[11ch] text-[clamp(2.9rem,11vw,6rem)] leading-[0.92] tracking-[-0.05em] text-gray-900">
+                            <h1 className="max-w-[11ch] text-[clamp(2.7rem,11vw,4rem)] leading-[0.92] tracking-[-0.05em] text-gray-900">
                                 <span className="block">Monitor wounds.</span>
                                 <span className="block">Prevent infections.</span>
                             </h1>
@@ -72,11 +73,11 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
                             </button>
                         </div>
 
-                        <div className="grid gap-3 sm:grid-cols-3">
+                        <div className="grid gap-5 sm:grid-cols-3">
                             {focusPoints.map(({ icon: Icon, label }) => (
                                 <div
                                     key={label}
-                                    className="flex items-center gap-3 rounded-2xl border border-white/80 bg-white/90 px-4 py-4 text-sm text-gray-700 shadow-sm"
+                                    className="flex items-center gap-3 rounded-2xl border border-white/80 bg-white/90 px-4 py-4 text-[.9em] text-gray-700 shadow-sm"
                                 >
                                     <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50">
                                         <Icon className="w-4 h-4 text-blue-600" />
@@ -88,11 +89,11 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
                     </div>
 
                     {/* Right: Health Monitor Graphic */}
-                    <div className="w-full max-w-3xl min-w-0 overflow-hidden rounded-2xl xl:justify-self-end">
+                    <div className="flex-1 rounded-2xl xl:basis-[58%]">
                         <img
                             src={heroGraphic}
                             alt="Wearable health monitor tracking vital signs"
-                            className="h-full w-full object-contain"
+                            className="h-full w-full object-contain xl:scale-110"
                         />
                     </div>
                 </div>
