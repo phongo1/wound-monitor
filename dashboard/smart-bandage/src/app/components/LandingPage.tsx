@@ -43,7 +43,7 @@ export default function LandingPage({ onGetStarted }: LandingPageProps) {
 
                     {/* Right: Health Monitor Graphic */}
                     <div className="relative">
-                        <div className="rounded-2xl overflow-hidden">
+                        <div className="rounded-2xl w-4xl">
                             <img
                                 src={heroGraphic}
                                 alt="Wearable health monitor tracking vital signs"
