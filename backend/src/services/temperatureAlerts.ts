@@ -4,20 +4,24 @@ import { StoredReading } from "../types/reading";
 
 export type TemperatureHeuristicResult = {
   device_id: string;
+  baseline_temperature_c: number | null;
   reading_count: number;
   window_minutes: number;
   latest_reading: StoredReading | null;
-  earliest_reading: StoredReading | null;
-  delta_c: number | null;
-  elapsed_minutes: number | null;
-  rate_c_per_hour: number | null;
+  cold_spot_reading: StoredReading | null;
+  latest_below_baseline_c: number | null;
+  latest_above_baseline_c: number | null;
+  cold_spot_depth_c: number | null;
+  rebound_delta_c: number | null;
+  rebound_elapsed_minutes: number | null;
+  rebound_rate_c_per_hour: number | null;
+  rebound_reading_count: number;
   severity: AlertSeverity | null;
   thresholds: {
-    min_readings: number;
-    warning_delta_c: number;
-    risk_delta_c: number;
-    warning_rate_c_per_hour: number;
-    risk_rate_c_per_hour: number;
+    min_rebound_readings: number;
+    cold_spot_delta_c: number;
+    inflammation_delta_c: number;
+    rebound_rate_c_per_hour: number;
   };
 };
 
@@ -57,58 +61,86 @@ export function evaluateTemperatureHeuristic(
     return left.id.localeCompare(right.id);
   });
 
-  const earliestReading = orderedReadings[0] ?? null;
   const latestReading = orderedReadings[orderedReadings.length - 1] ?? null;
+  const baselineTemperatureC = settings.baseline_temperature_c;
+  const priorReadings = latestReading
+    ? orderedReadings.filter((reading) => reading.timestamp < latestReading.timestamp)
+    : [];
+  const coldSpotCandidates = getColdSpotCandidates(orderedReadings, settings);
+  const priorColdSpotCandidates = getColdSpotCandidates(priorReadings, settings);
+  const coldSpotReading = getColdestReading(coldSpotCandidates);
+  const priorColdSpotReading = getColdestReading(priorColdSpotCandidates);
 
-  let deltaC: number | null = null;
-  let elapsedMinutes: number | null = null;
-  let rateCPerHour: number | null = null;
+  let latestBelowBaselineC: number | null = null;
+  let latestAboveBaselineC: number | null = null;
+  let coldSpotDepthC: number | null = null;
+  let reboundDeltaC: number | null = null;
+  let reboundElapsedMinutes: number | null = null;
+  let reboundRateCPerHour: number | null = null;
+  let reboundReadingCount = 0;
   let severity: AlertSeverity | null = null;
 
-  if (earliestReading && latestReading) {
-    deltaC = latestReading.temperature_c - earliestReading.temperature_c;
+  if (baselineTemperatureC !== null && latestReading) {
+    latestBelowBaselineC = Math.max(
+      0,
+      baselineTemperatureC - latestReading.temperature_c,
+    );
+    latestAboveBaselineC = Math.max(
+      0,
+      latestReading.temperature_c - baselineTemperatureC,
+    );
 
-    const elapsedMs = latestReading.timestamp - earliestReading.timestamp;
-    if (elapsedMs > 0) {
-      elapsedMinutes = elapsedMs / 60000;
-      rateCPerHour = (deltaC * 3600000) / elapsedMs;
+    if (coldSpotReading) {
+      coldSpotDepthC = baselineTemperatureC - coldSpotReading.temperature_c;
     }
 
-    if (
-      orderedReadings.length >= settings.min_readings &&
-      deltaC !== null &&
-      rateCPerHour !== null
-    ) {
+    if (latestBelowBaselineC >= settings.cold_spot_delta_c) {
+      severity = "warning";
+    }
+
+    if (priorColdSpotReading) {
+      reboundDeltaC = latestReading.temperature_c - priorColdSpotReading.temperature_c;
+      const reboundElapsedMs = latestReading.timestamp - priorColdSpotReading.timestamp;
+      reboundReadingCount = orderedReadings.filter(
+        (reading) => reading.timestamp >= priorColdSpotReading.timestamp,
+      ).length;
+
+      if (reboundElapsedMs > 0) {
+        reboundElapsedMinutes = reboundElapsedMs / 60000;
+        reboundRateCPerHour = (reboundDeltaC * 3600000) / reboundElapsedMs;
+      }
+
       if (
-        deltaC >= settings.risk_delta_c &&
-        rateCPerHour >= settings.risk_rate_c_per_hour
+        reboundReadingCount >= settings.min_rebound_readings &&
+        latestAboveBaselineC >= settings.inflammation_delta_c &&
+        reboundRateCPerHour !== null &&
+        reboundRateCPerHour >= settings.rebound_rate_c_per_hour
       ) {
         severity = "risk";
-      } else if (
-        deltaC >= settings.warning_delta_c &&
-        rateCPerHour >= settings.warning_rate_c_per_hour
-      ) {
-        severity = "warning";
       }
     }
   }
 
   return {
     device_id: settings.device_id,
+    baseline_temperature_c: baselineTemperatureC,
     reading_count: orderedReadings.length,
     window_minutes: settings.window_minutes,
     latest_reading: latestReading,
-    earliest_reading: earliestReading,
-    delta_c: deltaC,
-    elapsed_minutes: elapsedMinutes,
-    rate_c_per_hour: rateCPerHour,
+    cold_spot_reading: coldSpotReading,
+    latest_below_baseline_c: latestBelowBaselineC,
+    latest_above_baseline_c: latestAboveBaselineC,
+    cold_spot_depth_c: coldSpotDepthC,
+    rebound_delta_c: reboundDeltaC,
+    rebound_elapsed_minutes: reboundElapsedMinutes,
+    rebound_rate_c_per_hour: reboundRateCPerHour,
+    rebound_reading_count: reboundReadingCount,
     severity,
     thresholds: {
-      min_readings: settings.min_readings,
-      warning_delta_c: settings.warning_delta_c,
-      risk_delta_c: settings.risk_delta_c,
-      warning_rate_c_per_hour: settings.warning_rate_c_per_hour,
-      risk_rate_c_per_hour: settings.risk_rate_c_per_hour,
+      min_rebound_readings: settings.min_rebound_readings,
+      cold_spot_delta_c: settings.cold_spot_delta_c,
+      inflammation_delta_c: settings.inflammation_delta_c,
+      rebound_rate_c_per_hour: settings.rebound_rate_c_per_hour,
     },
   };
 }
@@ -117,35 +149,92 @@ function buildAlertRecord(
   result: TemperatureHeuristicResult,
   readingId: string,
 ): AlertRecord | null {
-  if (!result.severity || result.delta_c === null || result.rate_c_per_hour === null) {
+  if (!result.severity || result.baseline_temperature_c === null) {
     return null;
   }
 
-  const elapsedMinutes = result.elapsed_minutes?.toFixed(1) ?? "0.0";
-  const message = `Temperature rose ${result.delta_c.toFixed(
-    2,
-  )} C over ${elapsedMinutes} minutes (${result.rate_c_per_hour.toFixed(
-    2,
-  )} C/hour).`;
+  if (result.severity === "warning") {
+    if (result.latest_below_baseline_c === null) {
+      return null;
+    }
+
+    return {
+      device_id: result.device_id,
+      reading_id: readingId,
+      severity: "warning",
+      kind: "cold_spot",
+      message: `Cold spot detected: wound temperature is ${result.latest_below_baseline_c.toFixed(
+        2,
+      )} C below baseline ${result.baseline_temperature_c.toFixed(2)} C.`,
+      status: "open",
+      metadata: {
+        baseline_temperature_c: result.baseline_temperature_c,
+        reading_count: result.reading_count,
+        window_minutes: result.window_minutes,
+        cold_spot_depth_c: result.cold_spot_depth_c,
+        latest_below_baseline_c: result.latest_below_baseline_c,
+        thresholds: result.thresholds,
+        cold_spot_reading_id: result.cold_spot_reading?.id ?? null,
+        latest_reading_id: result.latest_reading?.id ?? null,
+        latest_temperature_c: result.latest_reading?.temperature_c ?? null,
+        latest_timestamp: result.latest_reading?.timestamp ?? null,
+      },
+    };
+  }
 
   return {
     device_id: result.device_id,
     reading_id: readingId,
-    severity: result.severity,
-    kind: "temperature_change_over_time",
-    message,
+    severity: "risk",
+    kind: "cold_spot_rebound_above_baseline",
+    message: `Cold spot rebound detected: temperature recovered from ${(
+      result.cold_spot_reading?.temperature_c ?? 0
+    ).toFixed(2)} C to ${(result.latest_reading?.temperature_c ?? 0).toFixed(
+      2,
+    )} C and is ${(result.latest_above_baseline_c ?? 0).toFixed(
+      2,
+    )} C above baseline.`,
     status: "open",
     metadata: {
+      baseline_temperature_c: result.baseline_temperature_c,
       reading_count: result.reading_count,
       window_minutes: result.window_minutes,
-      delta_c: result.delta_c,
-      elapsed_minutes: result.elapsed_minutes,
-      rate_c_per_hour: result.rate_c_per_hour,
+      cold_spot_depth_c: result.cold_spot_depth_c,
+      latest_above_baseline_c: result.latest_above_baseline_c,
+      rebound_delta_c: result.rebound_delta_c,
+      rebound_elapsed_minutes: result.rebound_elapsed_minutes,
+      rebound_rate_c_per_hour: result.rebound_rate_c_per_hour,
+      rebound_reading_count: result.rebound_reading_count,
       thresholds: result.thresholds,
-      earliest_reading_id: result.earliest_reading?.id ?? null,
+      cold_spot_reading_id: result.cold_spot_reading?.id ?? null,
       latest_reading_id: result.latest_reading?.id ?? null,
       latest_temperature_c: result.latest_reading?.temperature_c ?? null,
       latest_timestamp: result.latest_reading?.timestamp ?? null,
     },
   };
+}
+
+function getColdSpotCandidates(
+  readings: StoredReading[],
+  settings: DeviceAlertSettings,
+): StoredReading[] {
+  if (settings.baseline_temperature_c === null) {
+    return [];
+  }
+
+  return readings.filter(
+    (reading) =>
+      settings.baseline_temperature_c !== null &&
+      settings.baseline_temperature_c - reading.temperature_c >= settings.cold_spot_delta_c,
+  );
+}
+
+function getColdestReading(readings: StoredReading[]): StoredReading | null {
+  return readings.reduce<StoredReading | null>((coldest, reading) => {
+    if (!coldest || reading.temperature_c < coldest.temperature_c) {
+      return reading;
+    }
+
+    return coldest;
+  }, null);
 }

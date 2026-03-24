@@ -30,10 +30,14 @@ create table if not exists public.devices (
   device_id text primary key,
   patient_id uuid references public.patients(id) on delete set null,
   label text,
+  baseline_temperature_c double precision,
   status text not null default 'active' check (status in ('active', 'inactive')),
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+alter table public.devices
+  add column if not exists baseline_temperature_c double precision;
 
 drop trigger if exists devices_set_updated_at on public.devices;
 create trigger devices_set_updated_at
@@ -46,14 +50,25 @@ create index if not exists devices_patient_id_idx on public.devices (patient_id)
 create table if not exists public.device_alert_settings (
   device_id text primary key references public.devices(device_id) on delete cascade,
   window_minutes integer not null default 120 check (window_minutes >= 5 and window_minutes <= 1440),
-  min_readings integer not null default 3 check (min_readings >= 2 and min_readings <= 1000),
-  warning_delta_c double precision not null default 1.0 check (warning_delta_c >= 0),
-  risk_delta_c double precision not null default 2.0 check (risk_delta_c >= warning_delta_c),
-  warning_rate_c_per_hour double precision not null default 0.3 check (warning_rate_c_per_hour >= 0),
-  risk_rate_c_per_hour double precision not null default 0.6 check (risk_rate_c_per_hour >= warning_rate_c_per_hour),
+  min_rebound_readings integer not null default 2 check (min_rebound_readings >= 2 and min_rebound_readings <= 1000),
+  cold_spot_delta_c double precision not null default 0.5 check (cold_spot_delta_c >= 0),
+  inflammation_delta_c double precision not null default 0.5 check (inflammation_delta_c >= 0),
+  rebound_rate_c_per_hour double precision not null default 0.6 check (rebound_rate_c_per_hour >= 0),
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())
 );
+
+alter table public.device_alert_settings
+  add column if not exists min_rebound_readings integer not null default 2;
+
+alter table public.device_alert_settings
+  add column if not exists cold_spot_delta_c double precision not null default 0.5;
+
+alter table public.device_alert_settings
+  add column if not exists inflammation_delta_c double precision not null default 0.5;
+
+alter table public.device_alert_settings
+  add column if not exists rebound_rate_c_per_hour double precision not null default 0.6;
 
 drop trigger if exists device_alert_settings_set_updated_at on public.device_alert_settings;
 create trigger device_alert_settings_set_updated_at

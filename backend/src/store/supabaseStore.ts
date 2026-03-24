@@ -96,11 +96,12 @@ export class SupabaseStore implements ReadingsStore {
   }
 
   async getAlertSettings(deviceId: string): Promise<DeviceAlertSettings> {
-    const rows = await this.requestTable<DeviceAlertSettings[]>(
-      this.config.alertSettingsTable,
+    const deviceRows = await this.requestTable<
+      Array<{ device_id: string; baseline_temperature_c: number | null }>
+    >(
+      this.config.devicesTable,
       this.buildQuery({
-        select:
-          "device_id,window_minutes,min_readings,warning_delta_c,risk_delta_c,warning_rate_c_per_hour,risk_rate_c_per_hour",
+        select: "device_id,baseline_temperature_c",
         device_id: `eq.${deviceId}`,
         limit: 1,
       }),
@@ -109,7 +110,37 @@ export class SupabaseStore implements ReadingsStore {
       },
     );
 
-    return rows[0] ?? createDefaultAlertSettings(deviceId);
+    const settingsRows = await this.requestTable<
+      Array<{
+        device_id: string;
+        window_minutes: number;
+        min_rebound_readings: number;
+        cold_spot_delta_c: number;
+        inflammation_delta_c: number;
+        rebound_rate_c_per_hour: number;
+      }>
+    >(
+      this.config.alertSettingsTable,
+      this.buildQuery({
+        select:
+          "device_id,window_minutes,min_rebound_readings,cold_spot_delta_c,inflammation_delta_c,rebound_rate_c_per_hour",
+        device_id: `eq.${deviceId}`,
+        limit: 1,
+      }),
+      {
+        method: "GET",
+      },
+    );
+
+    const defaultSettings = createDefaultAlertSettings(deviceId);
+    const device = deviceRows[0];
+    const settings = settingsRows[0];
+
+    return {
+      ...defaultSettings,
+      baseline_temperature_c: device?.baseline_temperature_c ?? null,
+      ...(settings ?? {}),
+    };
   }
 
   async createAlert(alert: AlertRecord): Promise<void> {
