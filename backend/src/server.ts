@@ -22,6 +22,8 @@ app.get("/", (_req, res) => {
 app.listen(port, () => {
   console.log(`Backend listening on http://localhost:${port}`);
   console.log(
-    `Readings store: ${supabaseConfig ? `supabase (${supabaseConfig.table})` : "memory"}`,
+    `Readings store: ${
+      supabaseConfig ? `supabase (${supabaseConfig.readingsTable})` : "memory"
+    }`,
   );
 });

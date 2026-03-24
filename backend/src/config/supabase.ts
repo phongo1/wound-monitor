@@ -3,7 +3,9 @@ import { loadEnv } from "./loadEnv";
 export type SupabaseConfig = {
   url: string;
   serviceRoleKey: string;
-  table: string;
+  readingsTable: string;
+  alertsTable: string;
+  alertSettingsTable: string;
 };
 
 function readEnv(name: string): string | undefined {
@@ -16,7 +18,10 @@ export function getSupabaseConfig(): SupabaseConfig | null {
 
   const url = readEnv("SUPABASE_URL");
   const serviceRoleKey = readEnv("SUPABASE_SERVICE_ROLE_KEY");
-  const table = readEnv("SUPABASE_READINGS_TABLE") ?? "readings";
+  const readingsTable = readEnv("SUPABASE_READINGS_TABLE") ?? "readings";
+  const alertsTable = readEnv("SUPABASE_ALERTS_TABLE") ?? "alerts";
+  const alertSettingsTable =
+    readEnv("SUPABASE_ALERT_SETTINGS_TABLE") ?? "device_alert_settings";
 
   if (!url && !serviceRoleKey) {
     return null;
@@ -28,5 +33,5 @@ export function getSupabaseConfig(): SupabaseConfig | null {
     );
   }
 
-  return { url, serviceRoleKey, table };
+  return { url, serviceRoleKey, readingsTable, alertsTable, alertSettingsTable };
 }

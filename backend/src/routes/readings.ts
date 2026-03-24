@@ -1,5 +1,6 @@
 import { Router } from "express";
 
+import { evaluateReadingAndPersistAlert } from "../services/temperatureAlerts";
 import { getSupabaseConfig } from "../config/supabase";
 import { memoryStore } from "../store/memoryStore";
 import { ReadingsStore } from "../store/readingsStore";
@@ -32,8 +33,25 @@ router.post("/readings", async (req, res) => {
   }
 
   try {
-    await store.add(req.body);
-    return res.status(201).json({ ok: true });
+    const storedReading = await store.add(req.body);
+
+    try {
+      const heuristic = await evaluateReadingAndPersistAlert(store, storedReading);
+      return res.status(201).json({
+        ok: true,
+        reading: storedReading,
+        heuristic,
+      });
+    } catch (error) {
+      return res.status(201).json({
+        ok: true,
+        reading: storedReading,
+        alerting: {
+          ok: false,
+          details: error instanceof Error ? error.message : "Unknown error",
+        },
+      });
+    }
   } catch (error) {
     return res.status(500).json({
       error: "Failed to store reading",
