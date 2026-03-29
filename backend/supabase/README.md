@@ -2,7 +2,26 @@ Run [schema.sql](/smart-bandage/backend/supabase/schema.sql) in the Supabase SQL
 
 Heuristic details are documented in [temperature-heuristic.md](/smart-bandage/backend/docs/temperature-heuristic.md).
 
-What it creates:
+## Migration Workflow
+
+Use versioned Supabase migrations for schema changes instead of relying on direct edits in the Supabase remote SQL editor.
+
+Work flow steps:
+
+1. Create a migration file with `supabase migration new describe_change`
+2. Or generate one from local schema changes with `supabase db diff -f describe_change`
+3. Review and edit the SQL in `supabase/migrations/*.sql`
+4. Test locally with `supabase db reset`
+5. Commit the migration file
+6. Apply unapplied migrations to the linked project with `supabase db push`
+
+Notes:
+
+- `schema.sql` is the latest schema snapshot/reference, not the preferred deployment path
+- avoid making schema changes only in the Supabase SQL editor, or migration history will drift
+- if a remote schema change is made manually, follow up by capturing it in a proper migration
+
+What `schema.sql` creates:
 - `patients` for patient records
 - `devices` for bandage/device assignment and wound-site baseline temperature
 - `device_alert_settings` for per-device cold-spot and rebound thresholds
