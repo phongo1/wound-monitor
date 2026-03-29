@@ -18,7 +18,7 @@ interface TemperatureTrendProps {
   readings: TemperatureReading[];
 }
 
-const TEMPERATURE_UNIT = 'deg C';
+const TEMPERATURE_UNIT = '°C';
 
 function getTrendProgress(
   temperature: number,
