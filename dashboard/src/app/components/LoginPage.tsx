@@ -1,20 +1,43 @@
-import { useState } from 'react';
-import { Activity } from 'lucide-react';
+import { useState } from "react";
+import { Activity } from "lucide-react";
+
+import {
+  isSupabaseConfigured,
+  supabase,
+  supabaseConfigError,
+} from "../../lib/supabase";
 
 interface LoginPageProps {
-  onLogin: (email: string) => void;
   onSwitchToSignup: () => void;
 }
 
-export default function LoginPage({ onLogin, onSwitchToSignup }: LoginPageProps) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+export default function LoginPage({ onSwitchToSignup }: LoginPageProps) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (email && password) {
-      onLogin(email);
+
+    if (!isSupabaseConfigured || !supabase) {
+      setErrorMessage(supabaseConfigError ?? "Supabase Auth is not configured.");
+      return;
     }
+
+    setIsSubmitting(true);
+    setErrorMessage("");
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      setErrorMessage(error.message);
+    }
+
+    setIsSubmitting(false);
   };
 
   return (
@@ -63,15 +86,28 @@ export default function LoginPage({ onLogin, onSwitchToSignup }: LoginPageProps)
 
             <button
               type="submit"
-              className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition-colors"
+              disabled={isSubmitting || !isSupabaseConfigured}
+              className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition-colors disabled:cursor-not-allowed disabled:bg-blue-300"
             >
-              Sign In
+              {isSubmitting ? "Signing In..." : "Sign In"}
             </button>
+
+            {errorMessage && (
+              <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {errorMessage}
+              </p>
+            )}
+
+            {!isSupabaseConfigured && (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {supabaseConfigError}
+              </p>
+            )}
           </form>
 
           <div className="mt-6 text-center">
             <p className="text-gray-600">
-              Don't have an account?{' '}
+              Don't have an account?{" "}
               <button
                 onClick={onSwitchToSignup}
                 className="text-blue-600 hover:text-blue-700"
