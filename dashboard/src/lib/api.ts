@@ -18,6 +18,7 @@ export type CreatePatientInput = {
 export type MonitoringReading = {
   id: string;
   timestamp: number;
+  recordedAtMs: number;
   temperature: number;
   createdAt: string;
 };
@@ -127,6 +128,31 @@ export async function addPatientReading(
   await parseJsonResponse(response);
 }
 
+export async function assignPatientDevice(
+  patientId: string,
+  deviceId: string,
+): Promise<void> {
+  const response = await fetch(`${apiBaseUrl}/patients/${patientId}/device`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      device_id: deviceId,
+    }),
+  });
+
+  await parseJsonResponse(response);
+}
+
+export async function resetPatientMonitoring(patientId: string): Promise<void> {
+  const response = await fetch(`${apiBaseUrl}/patients/${patientId}/reset`, {
+    method: "POST",
+  });
+
+  await parseJsonResponse(response);
+}
+
 type ApiPatient = {
   id: string;
   name: string;
@@ -180,6 +206,7 @@ function mapReading(reading: ApiReading): MonitoringReading {
   return {
     id: reading.id,
     timestamp: reading.timestamp,
+    recordedAtMs: Date.parse(reading.created_at),
     temperature: reading.temperature_c,
     createdAt: reading.created_at,
   };

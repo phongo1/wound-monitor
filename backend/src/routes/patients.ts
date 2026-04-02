@@ -43,6 +43,19 @@ function isPatientReadingPayload(
   return isBaselinePayload(body);
 }
 
+function isDeviceAssignmentPayload(body: unknown): body is { device_id: string } {
+  if (!body || typeof body !== "object") {
+    return false;
+  }
+
+  const candidate = body as Partial<{ device_id: string }>;
+  return typeof candidate.device_id === "string" && candidate.device_id.trim().length > 0;
+}
+
+function normalizeTimestamp(timestamp: number): number {
+  return timestamp < 100000000000 ? Date.now() : timestamp;
+}
+
 router.get("/patients", async (_req, res) => {
   try {
     return res.json(await store.listPatients());
@@ -127,7 +140,7 @@ router.post("/patients/:id/baseline", async (req, res) => {
     }
 
     const device = await store.setBaselineForPatient(patient.id, req.body.temperature_c);
-    const timestamp = req.body.timestamp ?? Date.now();
+    const timestamp = normalizeTimestamp(req.body.timestamp ?? Date.now());
     const reading: Reading = {
       device_id: device.device_id,
       temperature_c: req.body.temperature_c,
@@ -163,9 +176,10 @@ router.post("/patients/:id/readings", async (req, res) => {
     const reading: Reading = {
       device_id: patient.device_id,
       temperature_c: req.body.temperature_c,
-      timestamp: req.body.timestamp ?? Date.now(),
+      timestamp: normalizeTimestamp(req.body.timestamp ?? Date.now()),
     };
 
+    await store.ensureBaselineForDevice(patient.device_id, req.body.temperature_c);
     const storedReading = await store.add(reading);
     const heuristic = await evaluateReadingAndPersistAlert(store, storedReading);
 
@@ -176,6 +190,44 @@ router.post("/patients/:id/readings", async (req, res) => {
   } catch (error) {
     return res.status(500).json({
       error: "Failed to create reading",
+      details: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+router.post("/patients/:id/device", async (req, res) => {
+  if (!isDeviceAssignmentPayload(req.body)) {
+    return res.status(400).json({ error: "Invalid device assignment payload" });
+  }
+
+  try {
+    const patient = await store.getPatient(req.params.id);
+    if (!patient) {
+      return res.status(404).json({ error: "Patient not found" });
+    }
+
+    const device = await store.assignDeviceToPatient(patient.id, req.body.device_id.trim());
+    return res.status(200).json({ device });
+  } catch (error) {
+    return res.status(500).json({
+      error: "Failed to assign device",
+      details: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+router.post("/patients/:id/reset", async (req, res) => {
+  try {
+    const patient = await store.getPatient(req.params.id);
+    if (!patient) {
+      return res.status(404).json({ error: "Patient not found" });
+    }
+
+    const device = await store.resetMonitoringForPatient(patient.id);
+    return res.status(200).json({ device });
+  } catch (error) {
+    return res.status(500).json({
+      error: "Failed to reset monitoring data",
       details: error instanceof Error ? error.message : "Unknown error",
     });
   }

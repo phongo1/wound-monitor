@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { Box, LinearProgress, Stack, Typography } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
+import { LineChart } from "@mui/x-charts/LineChart";
 import { Activity, AlertCircle, Thermometer, TrendingDown, TrendingUp } from "lucide-react";
 
 import {
-  addPatientReading,
+  assignPatientDevice,
   getPatientMonitoring,
-  setPatientBaseline,
+  resetPatientMonitoring,
   type MonitoringSnapshot,
   type Patient,
 } from "../../lib/api";
@@ -13,6 +14,7 @@ import {
 interface TemperatureReading {
   id: string;
   timestamp: number;
+  recordedAtMs: number;
   temperature: number;
   time: string;
 }
@@ -28,24 +30,22 @@ interface TemperatureTrendProps {
 }
 
 const TEMPERATURE_UNIT = "°C";
-
-function getTrendProgress(
-  temperature: number,
-  minTemperature: number,
-  maxTemperature: number,
-) {
-  if (maxTemperature <= minTemperature) {
-    return 100;
-  }
-
-  return 15 + ((temperature - minTemperature) / (maxTemperature - minTemperature)) * 85;
-}
+const SELECTED_PATIENT_KEY = "woundcare.monitor.selectedPatient";
+const LIVE_POLL_INTERVAL_MS = 5000;
 
 function TemperatureTrend({ baselineTemp, readings }: TemperatureTrendProps) {
+  const chartReadings = readings;
   const latestReading = readings[readings.length - 1];
-  const temperatures = readings.map((reading) => reading.temperature);
+  const temperatures = chartReadings.map((reading) => reading.temperature);
   const minTemperature = Math.min(baselineTemp, ...temperatures);
   const maxTemperature = Math.max(baselineTemp, ...temperatures);
+  const firstRecordedAtMs = chartReadings[0]?.recordedAtMs ?? Date.now();
+  const elapsedMinutes = chartReadings.map(
+    (reading) => (reading.recordedAtMs - firstRecordedAtMs) / 60000,
+  );
+  const baselineSeries = chartReadings.map(() => baselineTemp);
+  const temperatureSeries = chartReadings.map((reading) => reading.temperature);
+  const maxElapsedMinutes = Math.max(elapsedMinutes[elapsedMinutes.length - 1] ?? 0, 1);
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
@@ -68,71 +68,87 @@ function TemperatureTrend({ baselineTemp, readings }: TemperatureTrendProps) {
         )}
       </Stack>
 
-      <Box sx={{ maxHeight: 320, overflowY: "auto", pr: 1 }}>
-        <Stack spacing={2}>
-          {readings.map((reading, index) => {
-            const isLatest = index === readings.length - 1;
+      <Box
+        sx={{
+          width: "100%",
+          height: 320,
+          borderRadius: 3,
+          border: "1px solid",
+          borderColor: "grey.200",
+          background: "linear-gradient(180deg, #f8fbff 0%, #ffffff 100%)",
+          p: 2,
+        }}
+      >
+        <LineChart
+          series={[
+            {
+              data: baselineSeries,
+              label: "Baseline",
+              color: "#94a3b8",
+              curve: "linear",
+              showMark: false,
+            },
+            {
+              data: temperatureSeries,
+              label: "Temperature",
+              color: "#1976d2",
+              curve: "monotoneX",
+              showMark: chartReadings.length <= 12,
+            },
+          ]}
+          xAxis={[
+            {
+              scaleType: "linear",
+              data: elapsedMinutes,
+              min: 0,
+              max: maxElapsedMinutes,
+              height: 40,
+              tickNumber: Math.min(Math.floor(maxElapsedMinutes) + 1, 8),
+              valueFormatter: (value) => {
+                const rounded = Math.round(value);
+                if (Math.abs(value - rounded) >= 0.001) {
+                  return "";
+                }
 
-            return (
-              <Box
-                key={reading.id}
-                sx={{
-                  display: "grid",
-                  gap: 1.5,
-                  alignItems: "center",
-                  gridTemplateColumns: { xs: "1fr", sm: "80px 1fr 92px" },
-                }}
-              >
-                <Typography variant="body2" color="text.secondary">
-                  {reading.time}
-                </Typography>
-
-                <Box>
-                  <LinearProgress
-                    variant="determinate"
-                    value={getTrendProgress(
-                      reading.temperature,
-                      minTemperature,
-                      maxTemperature,
-                    )}
-                    sx={{
-                      height: 10,
-                      borderRadius: 999,
-                      backgroundColor: "grey.100",
-                      "& .MuiLinearProgress-bar": {
-                        borderRadius: 999,
-                        backgroundColor: isLatest ? "primary.main" : "primary.light",
-                      },
-                    }}
-                  />
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    sx={{ display: "block", mt: 0.75 }}
-                  >
-                    {index === 0 ? "Baseline reading" : `Reading ${index + 1}`}
-                  </Typography>
-                </Box>
-
-                <Typography
-                  variant="body2"
-                  sx={{ fontWeight: 600, textAlign: { sm: "right" } }}
-                >
-                  {reading.temperature.toFixed(1)} {TEMPERATURE_UNIT}
-                </Typography>
-              </Box>
-            );
-          })}
-        </Stack>
+                return new Date(firstRecordedAtMs + rounded * 60000).toLocaleTimeString(
+                  "en-US",
+                  {
+                    hour: "numeric",
+                    minute: "2-digit",
+                  },
+                );
+              },
+            },
+          ]}
+          yAxis={[
+            {
+              width: 40,
+              min: Math.floor((minTemperature - 0.5) * 10) / 10,
+              max: Math.ceil((maxTemperature + 0.5) * 10) / 10,
+              valueFormatter: (value) => value.toFixed(1),
+            },
+          ]}
+          margin={{ top: 16, right: 40, bottom: 48, left: 44 }}
+          grid={{ horizontal: true }}
+          slotProps={{
+            legend: {
+              position: { vertical: "top", horizontal: "right" },
+            },
+          }}
+        />
       </Box>
     </Box>
   );
 }
 
 export default function MonitorTab({ patients, onPatientsChanged }: MonitorTabProps) {
-  const [selectedPatient, setSelectedPatient] = useState("");
+  const [selectedPatient, setSelectedPatient] = useState(
+    () => window.localStorage.getItem(SELECTED_PATIENT_KEY) ?? "",
+  );
   const [monitoring, setMonitoring] = useState<MonitoringSnapshot | null>(null);
-  const [inputTemp, setInputTemp] = useState("");
+  const [sensorDeviceId, setSensorDeviceId] = useState("esp32-thing-plus-1");
+  const [showSensorDevice, setShowSensorDevice] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -141,14 +157,38 @@ export default function MonitorTab({ patients, onPatientsChanged }: MonitorTabPr
     if (!selectedPatient) {
       setMonitoring(null);
       setErrorMessage("");
+      window.localStorage.removeItem(SELECTED_PATIENT_KEY);
       return;
     }
 
+    window.localStorage.setItem(SELECTED_PATIENT_KEY, selectedPatient);
     void loadMonitoring(selectedPatient);
   }, [selectedPatient]);
 
-  const loadMonitoring = async (patientId: string) => {
-    setIsLoading(true);
+  useEffect(() => {
+    if (selectedPatient && !patients.some((patient) => patient.id === selectedPatient)) {
+      setSelectedPatient("");
+    }
+  }, [patients, selectedPatient]);
+
+  useEffect(() => {
+    if (!selectedPatient) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void loadMonitoring(selectedPatient, { silent: true });
+    }, LIVE_POLL_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [selectedPatient]);
+
+  const loadMonitoring = async (patientId: string, options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setIsLoading(true);
+    }
     setErrorMessage("");
 
     try {
@@ -159,13 +199,14 @@ export default function MonitorTab({ patients, onPatientsChanged }: MonitorTabPr
       );
       setMonitoring(null);
     } finally {
-      setIsLoading(false);
+      if (!options?.silent) {
+        setIsLoading(false);
+      }
     }
   };
 
-  const handleSetBaseline = async () => {
-    const temperature = parseFloat(inputTemp);
-    if (!selectedPatient || Number.isNaN(temperature)) {
+  const handleAssignDevice = async () => {
+    if (!selectedPatient || !sensorDeviceId.trim()) {
       return;
     }
 
@@ -173,19 +214,17 @@ export default function MonitorTab({ patients, onPatientsChanged }: MonitorTabPr
     setErrorMessage("");
 
     try {
-      await setPatientBaseline(selectedPatient, temperature);
+      await assignPatientDevice(selectedPatient, sensorDeviceId.trim());
       await Promise.all([loadMonitoring(selectedPatient), onPatientsChanged()]);
-      setInputTemp("");
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to set baseline.");
+      setErrorMessage(error instanceof Error ? error.message : "Failed to assign device.");
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleAddReading = async () => {
-    const temperature = parseFloat(inputTemp);
-    if (!selectedPatient || Number.isNaN(temperature)) {
+  const handleResetMonitoring = async () => {
+    if (!selectedPatient) {
       return;
     }
 
@@ -193,11 +232,13 @@ export default function MonitorTab({ patients, onPatientsChanged }: MonitorTabPr
     setErrorMessage("");
 
     try {
-      await addPatientReading(selectedPatient, temperature);
-      await loadMonitoring(selectedPatient);
-      setInputTemp("");
+      await resetPatientMonitoring(selectedPatient);
+      setShowResetConfirm(false);
+      await Promise.all([loadMonitoring(selectedPatient), onPatientsChanged()]);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Failed to add reading.");
+      setErrorMessage(
+        error instanceof Error ? error.message : "Failed to reset monitoring data.",
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -207,12 +248,13 @@ export default function MonitorTab({ patients, onPatientsChanged }: MonitorTabPr
     monitoring?.readings.map((reading) => ({
       id: reading.id,
       timestamp: reading.timestamp,
+      recordedAtMs: reading.recordedAtMs,
       temperature: reading.temperature,
-      time: new Date(reading.timestamp).toLocaleTimeString("en-US", {
+      time: new Date(reading.recordedAtMs).toLocaleTimeString("en-US", {
         hour: "2-digit",
         minute: "2-digit",
       }),
-    })) ?? [];
+    })).sort((left, right) => left.recordedAtMs - right.recordedAtMs) ?? [];
 
   const baselineTemp = monitoring?.patient.baselineTemperatureC ?? null;
   const currentTemp = readings[readings.length - 1]?.temperature ?? null;
@@ -262,47 +304,6 @@ export default function MonitorTab({ patients, onPatientsChanged }: MonitorTabPr
 
         {selectedPatient && !isLoading && monitoring && (
           <>
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
-              <h3 className="text-gray-900 mb-4">Temperature Input</h3>
-              <div className="flex gap-4 items-end">
-                <div className="flex-1">
-                  <label htmlFor="tempInput" className="block text-gray-700 mb-2">
-                    Temperature ({TEMPERATURE_UNIT})
-                  </label>
-                  <input
-                    id="tempInput"
-                    type="number"
-                    step="0.1"
-                    value={inputTemp}
-                    onChange={(e) => setInputTemp(e.target.value)}
-                    className="w-full px-4 py-3 rounded-lg border border-gray-200 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    placeholder="37.0"
-                  />
-                </div>
-                {baselineTemp === null ? (
-                  <button
-                    onClick={() => {
-                      void handleSetBaseline();
-                    }}
-                    disabled={!inputTemp || isSubmitting}
-                    className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
-                  >
-                    {isSubmitting ? "Saving..." : "Set Baseline"}
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => {
-                      void handleAddReading();
-                    }}
-                    disabled={!inputTemp || isSubmitting}
-                    className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
-                  >
-                    {isSubmitting ? "Saving..." : "Add Reading"}
-                  </button>
-                )}
-              </div>
-            </div>
-
             {baselineTemp !== null ? (
               <>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
@@ -399,17 +400,114 @@ export default function MonitorTab({ patients, onPatientsChanged }: MonitorTabPr
                     <p className="text-gray-600">No readings recorded yet.</p>
                   )}
                 </div>
+
+                <div className="mt-6 space-y-4">
+                  <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <h3 className="text-gray-900">Sensor Device</h3>
+                        <p className="mt-1 text-sm text-gray-500">
+                          Current patient device: {monitoring.patient.deviceId ?? "Not assigned"}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setShowSensorDevice((current) => !current)}
+                        className="px-4 py-2 rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 transition-colors"
+                      >
+                        {showSensorDevice ? "Hide" : "Edit"}
+                      </button>
+                    </div>
+
+                    {showSensorDevice && (
+                      <div className="mt-4 flex gap-4 items-end">
+                        <div className="flex-1">
+                          <label htmlFor="sensorDeviceId" className="block text-gray-700 mb-2">
+                            Linked Sensor Device ID
+                          </label>
+                          <input
+                            id="sensorDeviceId"
+                            type="text"
+                            value={sensorDeviceId}
+                            onChange={(e) => setSensorDeviceId(e.target.value)}
+                            className="w-full px-4 py-3 rounded-lg border border-gray-200 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="esp32-thing-plus-1"
+                          />
+                        </div>
+                        <button
+                          onClick={() => {
+                            void handleAssignDevice();
+                          }}
+                          disabled={!sensorDeviceId.trim() || isSubmitting}
+                          className="bg-slate-700 text-white px-6 py-3 rounded-lg hover:bg-slate-800 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+                        >
+                          {isSubmitting ? "Linking..." : "Link Sensor"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <h3 className="text-gray-900">Monitoring Reset</h3>
+                        <p className="mt-1 text-sm text-gray-500">
+                          Clear the current baseline, readings, and alerts without unlinking the sensor.
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setShowResetConfirm(true)}
+                        disabled={isSubmitting}
+                        className="border border-red-200 bg-red-50 text-red-700 px-6 py-3 rounded-lg hover:bg-red-100 transition-colors disabled:bg-gray-100 disabled:text-gray-400 disabled:border-gray-200 disabled:cursor-not-allowed"
+                      >
+                        Reset Data + Baseline
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </>
             ) : (
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-8 text-center">
                 <Thermometer className="w-12 h-12 text-blue-600 mx-auto mb-4" />
-                <h3 className="text-gray-900 mb-2">Set Baseline Temperature</h3>
+                <h3 className="text-gray-900 mb-2">Record the First Temperature</h3>
                 <p className="text-gray-600">
-                  Enter the initial wound temperature to begin monitoring
+                  The first temperature reading will become the baseline automatically
                 </p>
               </div>
             )}
           </>
+        )}
+
+        {showResetConfirm && (
+          <div className="fixed inset-0 z-20 flex items-center justify-center bg-slate-900/35 px-4">
+            <div className="w-full max-w-md rounded-2xl border border-red-100 bg-white p-6 shadow-2xl">
+              <div className="mb-4 inline-flex rounded-xl bg-red-50 p-3 text-red-600">
+                <AlertCircle className="w-6 h-6" />
+              </div>
+              <h3 className="text-gray-900 mb-2">Reset Monitoring Data?</h3>
+              <p className="text-gray-600">
+                This will clear the selected patient&apos;s baseline, readings, and alerts. The
+                linked sensor device will stay attached so new uploads can continue.
+              </p>
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  onClick={() => setShowResetConfirm(false)}
+                  disabled={isSubmitting}
+                  className="px-5 py-3 rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 transition-colors disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    void handleResetMonitoring();
+                  }}
+                  disabled={isSubmitting}
+                  className="px-5 py-3 rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors disabled:bg-red-300 disabled:cursor-not-allowed"
+                >
+                  {isSubmitting ? "Resetting..." : "Confirm Reset"}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {!selectedPatient && (
@@ -432,7 +530,7 @@ function calculateLastTwoReadingRate(readings: TemperatureReading[]): number {
   }
 
   const lastTwo = readings.slice(-2);
-  const timeDiff = (lastTwo[1].timestamp - lastTwo[0].timestamp) / (1000 * 60 * 60);
+  const timeDiff = (lastTwo[1].recordedAtMs - lastTwo[0].recordedAtMs) / (1000 * 60 * 60);
 
   if (timeDiff <= 0) {
     return 0;
@@ -440,6 +538,7 @@ function calculateLastTwoReadingRate(readings: TemperatureReading[]): number {
 
   return (lastTwo[1].temperature - lastTwo[0].temperature) / timeDiff;
 }
+
 
 function getStatusColor(status: string) {
   switch (status) {

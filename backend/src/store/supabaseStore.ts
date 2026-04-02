@@ -212,6 +212,205 @@ export class SupabaseStore implements ReadingsStore {
     return deviceRows[0] ?? null;
   }
 
+  async ensureBaselineForDevice(
+    deviceId: string,
+    baselineTemperatureC: number,
+  ): Promise<DeviceRecord | null> {
+    const deviceRows = await this.requestTable<DeviceRecord[]>(
+      this.config.devicesTable,
+      this.buildQuery({
+        select: "device_id,patient_id,label,baseline_temperature_c,status,created_at,updated_at",
+        device_id: `eq.${deviceId}`,
+        limit: 1,
+      }),
+      { method: "GET" },
+    );
+
+    const device = deviceRows[0];
+    if (!device) {
+      return null;
+    }
+
+    if (device.baseline_temperature_c !== null) {
+      return device;
+    }
+
+    const updatedRows = await this.requestTable<DeviceRecord[]>(
+      this.config.devicesTable,
+      this.buildQuery({
+        select: "device_id,patient_id,label,baseline_temperature_c,status,created_at,updated_at",
+        device_id: `eq.${deviceId}`,
+      }),
+      {
+        method: "PATCH",
+        headers: {
+          Prefer: "return=representation",
+        },
+        body: JSON.stringify({
+          baseline_temperature_c: baselineTemperatureC,
+        }),
+      },
+    );
+
+    return updatedRows[0] ?? null;
+  }
+
+  async assignDeviceToPatient(patientId: string, deviceId: string): Promise<DeviceRecord> {
+    const patient = await this.getPatient(patientId);
+    if (!patient) {
+      throw new Error("Patient not found.");
+    }
+
+    const currentDevice = await this.getDeviceForPatient(patientId);
+    if (currentDevice?.device_id === deviceId) {
+      return currentDevice;
+    }
+
+    if (currentDevice) {
+      await this.requestTable(
+        this.config.devicesTable,
+        this.buildQuery({
+          device_id: `eq.${currentDevice.device_id}`,
+        }),
+        {
+          method: "PATCH",
+          headers: {
+            Prefer: "return=minimal",
+          },
+          body: JSON.stringify({
+            patient_id: null,
+          }),
+        },
+      );
+    }
+
+    const existingRows = await this.requestTable<DeviceRecord[]>(
+      this.config.devicesTable,
+      this.buildQuery({
+        select: "device_id,patient_id,label,baseline_temperature_c,status,created_at,updated_at",
+        device_id: `eq.${deviceId}`,
+        limit: 1,
+      }),
+      { method: "GET" },
+    );
+
+    const existingDevice = existingRows[0];
+    if (existingDevice) {
+      const updatedRows = await this.requestTable<DeviceRecord[]>(
+        this.config.devicesTable,
+        this.buildQuery({
+          select: "device_id,patient_id,label,baseline_temperature_c,status,created_at,updated_at",
+          device_id: `eq.${deviceId}`,
+        }),
+        {
+          method: "PATCH",
+          headers: {
+            Prefer: "return=representation",
+          },
+          body: JSON.stringify({
+            patient_id: patientId,
+            baseline_temperature_c:
+              existingDevice.baseline_temperature_c ?? currentDevice?.baseline_temperature_c ?? null,
+            status: "active",
+          }),
+        },
+      );
+
+      const updatedDevice = updatedRows[0];
+      if (!updatedDevice) {
+        throw new Error("Failed to assign existing device.");
+      }
+
+      return updatedDevice;
+    }
+
+    const createdRows = await this.requestTable<DeviceRecord[]>(
+      this.config.devicesTable,
+      this.buildQuery({
+        select: "device_id,patient_id,label,baseline_temperature_c,status,created_at,updated_at",
+      }),
+      {
+        method: "POST",
+        headers: {
+          Prefer: "return=representation",
+        },
+        body: JSON.stringify([
+          {
+            device_id: deviceId,
+            patient_id: patientId,
+            label: currentDevice?.label ?? `${patient.name} sensor`,
+            baseline_temperature_c: currentDevice?.baseline_temperature_c ?? null,
+            status: "active",
+          },
+        ]),
+      },
+    );
+
+    const createdDevice = createdRows[0];
+    if (!createdDevice) {
+      throw new Error("Failed to create assigned device.");
+    }
+
+    return createdDevice;
+  }
+
+  async resetMonitoringForPatient(patientId: string): Promise<DeviceRecord> {
+    const device = await this.getDeviceForPatient(patientId);
+    if (!device) {
+      throw new Error("Patient device not found.");
+    }
+
+    await this.requestTable(
+      this.config.alertsTable,
+      this.buildQuery({
+        device_id: `eq.${device.device_id}`,
+      }),
+      {
+        method: "DELETE",
+        headers: {
+          Prefer: "return=minimal",
+        },
+      },
+    );
+
+    await this.requestTable(
+      this.config.readingsTable,
+      this.buildQuery({
+        device_id: `eq.${device.device_id}`,
+      }),
+      {
+        method: "DELETE",
+        headers: {
+          Prefer: "return=minimal",
+        },
+      },
+    );
+
+    const deviceRows = await this.requestTable<DeviceRecord[]>(
+      this.config.devicesTable,
+      this.buildQuery({
+        select: "device_id,patient_id,label,baseline_temperature_c,status,created_at,updated_at",
+        device_id: `eq.${device.device_id}`,
+      }),
+      {
+        method: "PATCH",
+        headers: {
+          Prefer: "return=representation",
+        },
+        body: JSON.stringify({
+          baseline_temperature_c: null,
+        }),
+      },
+    );
+
+    const updatedDevice = deviceRows[0];
+    if (!updatedDevice) {
+      throw new Error("Failed to reset monitoring state.");
+    }
+
+    return updatedDevice;
+  }
+
   async setBaselineForPatient(
     patientId: string,
     baselineTemperatureC: number,

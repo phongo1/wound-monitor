@@ -6,6 +6,10 @@ import { Reading } from "../types/reading";
 
 const router = Router();
 
+function normalizeTimestamp(timestamp: number): number {
+  return timestamp < 100000000000 ? Date.now() : timestamp;
+}
+
 function isReadingPayload(body: unknown): body is Reading {
   if (!body || typeof body !== "object") {
     return false;
@@ -26,7 +30,12 @@ router.post("/readings", async (req, res) => {
   }
 
   try {
-    const storedReading = await store.add(req.body);
+    const reading = {
+      ...req.body,
+      timestamp: normalizeTimestamp(req.body.timestamp),
+    };
+    const storedReading = await store.add(reading);
+    await store.ensureBaselineForDevice(storedReading.device_id, storedReading.temperature_c);
 
     try {
       const heuristic = await evaluateReadingAndPersistAlert(store, storedReading);

@@ -17,10 +17,19 @@ import SignupPage from "./components/SignupPage";
 
 type Page = "landing" | "login" | "signup";
 type Tab = "patients" | "monitor";
-
+const APP_PAGE_KEY = "woundcare.currentPage";
+const APP_TAB_KEY = "woundcare.currentTab";
 export default function App() {
-  const [currentPage, setCurrentPage] = useState<Page>("landing");
-  const [currentTab, setCurrentTab] = useState<Tab>("patients");
+  const [currentPage, setCurrentPage] = useState<Page>(() => {
+    const savedPage = window.localStorage.getItem(APP_PAGE_KEY);
+    return savedPage === "landing" || savedPage === "login" || savedPage === "signup"
+      ? savedPage
+      : "landing";
+  });
+  const [currentTab, setCurrentTab] = useState<Tab>(() => {
+    const savedTab = window.localStorage.getItem(APP_TAB_KEY);
+    return savedTab === "patients" || savedTab === "monitor" ? savedTab : "patients";
+  });
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(!isSupabaseConfigured);
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -54,6 +63,8 @@ export default function App() {
         setPatientsError("");
         setCurrentTab("patients");
         setCurrentPage("landing");
+        window.localStorage.removeItem(APP_TAB_KEY);
+        window.localStorage.removeItem(APP_PAGE_KEY);
       }
     });
 
@@ -70,6 +81,14 @@ export default function App() {
 
     void loadPatients();
   }, [session]);
+
+  useEffect(() => {
+    window.localStorage.setItem(APP_PAGE_KEY, currentPage);
+  }, [currentPage]);
+
+  useEffect(() => {
+    window.localStorage.setItem(APP_TAB_KEY, currentTab);
+  }, [currentTab]);
 
   const loadPatients = async () => {
     setPatientsLoading(true);
@@ -90,6 +109,8 @@ export default function App() {
       setPatients([]);
       setCurrentTab("patients");
       setCurrentPage("landing");
+      window.localStorage.removeItem(APP_TAB_KEY);
+      window.localStorage.removeItem(APP_PAGE_KEY);
       return;
     }
 
@@ -115,7 +136,7 @@ export default function App() {
 
   if (session) {
     return (
-      <div className="min-h-screen bg-gray-50 flex flex-col">
+      <div className="h-screen overflow-hidden bg-gray-50 flex flex-col">
         <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
           <div className="px-8 py-4 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -139,27 +160,27 @@ export default function App() {
           </div>
         </header>
 
-        <div className="flex-1 flex">
-          <nav className="bg-white border-r border-gray-200 w-64 p-4">
+        <div className="flex-1 flex min-h-0">
+          <nav className="w-64 shrink-0 bg-white border-r border-gray-200 p-4 sticky top-[81px] self-start h-[calc(100vh-81px)]">
             <div className="space-y-2">
               <button
                 onClick={() => setCurrentTab("patients")}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                className={`w-full flex items-center px-4 py-3 rounded-lg transition-colors ${
                   currentTab === "patients"
                     ? "bg-blue-50 text-blue-600"
                     : "text-gray-600 hover:bg-gray-50"
-                }`}
+                } gap-3`}
               >
                 <Users className="w-5 h-5" />
                 <span>Patients</span>
               </button>
               <button
                 onClick={() => setCurrentTab("monitor")}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                className={`w-full flex items-center px-4 py-3 rounded-lg transition-colors ${
                   currentTab === "monitor"
                     ? "bg-blue-50 text-blue-600"
                     : "text-gray-600 hover:bg-gray-50"
-                }`}
+                } gap-3`}
               >
                 <Monitor className="w-5 h-5" />
                 <span>Monitor</span>
@@ -167,7 +188,7 @@ export default function App() {
             </div>
           </nav>
 
-          <main className="flex-1 overflow-auto">
+          <main className="flex-1 overflow-y-auto h-[calc(100vh-81px)]">
             {currentTab === "patients" && (
               <PatientsTab
                 patients={patients}

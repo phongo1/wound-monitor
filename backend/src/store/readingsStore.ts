@@ -17,6 +17,9 @@ export interface ReadingsStore {
   createPatient(input: CreatePatientInput): Promise<PatientRecord>;
   getPatient(patientId: string): Promise<PatientRecord | null>;
   getDeviceForPatient(patientId: string): Promise<DeviceRecord | null>;
+  ensureBaselineForDevice(deviceId: string, baselineTemperatureC: number): Promise<DeviceRecord | null>;
+  assignDeviceToPatient(patientId: string, deviceId: string): Promise<DeviceRecord>;
+  resetMonitoringForPatient(patientId: string): Promise<DeviceRecord>;
   setBaselineForPatient(patientId: string, baselineTemperatureC: number): Promise<DeviceRecord>;
   historyForDevice(
     deviceId: string,

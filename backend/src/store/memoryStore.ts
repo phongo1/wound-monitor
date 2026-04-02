@@ -82,6 +82,129 @@ class MemoryStore implements ReadingsStore {
     return null;
   }
 
+  async ensureBaselineForDevice(
+    deviceId: string,
+    baselineTemperatureC: number,
+  ): Promise<DeviceRecord | null> {
+    const device = this.devices.get(deviceId);
+    if (!device) {
+      return null;
+    }
+
+    if (device.baseline_temperature_c !== null) {
+      return device;
+    }
+
+    const updatedDevice: DeviceRecord = {
+      ...device,
+      baseline_temperature_c: baselineTemperatureC,
+      updated_at: new Date().toISOString(),
+    };
+    this.devices.set(deviceId, updatedDevice);
+
+    const currentSettings =
+      this.alertSettings.get(deviceId) ?? createDefaultAlertSettings(deviceId);
+    this.alertSettings.set(deviceId, {
+      ...currentSettings,
+      baseline_temperature_c: baselineTemperatureC,
+    });
+
+    if (updatedDevice.patient_id) {
+      const patient = this.patients.get(updatedDevice.patient_id);
+      if (patient) {
+        this.patients.set(updatedDevice.patient_id, {
+          ...patient,
+          baseline_temperature_c: baselineTemperatureC,
+        });
+      }
+    }
+
+    return updatedDevice;
+  }
+
+  async assignDeviceToPatient(patientId: string, deviceId: string): Promise<DeviceRecord> {
+    const patient = this.patients.get(patientId);
+    if (!patient) {
+      throw new Error("Patient not found.");
+    }
+
+    const currentDevice = await this.getDeviceForPatient(patientId);
+    if (currentDevice && currentDevice.device_id !== deviceId) {
+      this.devices.set(currentDevice.device_id, {
+        ...currentDevice,
+        patient_id: null,
+        updated_at: new Date().toISOString(),
+      });
+    }
+
+    const existingDevice = this.devices.get(deviceId);
+    const assignedDevice: DeviceRecord = existingDevice
+      ? {
+          ...existingDevice,
+          patient_id: patientId,
+          baseline_temperature_c:
+            existingDevice.baseline_temperature_c ?? currentDevice?.baseline_temperature_c ?? null,
+          status: "active",
+          updated_at: new Date().toISOString(),
+        }
+      : {
+          device_id: deviceId,
+          patient_id: patientId,
+          label: `${patient.name} sensor`,
+          baseline_temperature_c: currentDevice?.baseline_temperature_c ?? null,
+          status: "active",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+
+    this.devices.set(deviceId, assignedDevice);
+    this.patients.set(patientId, {
+      ...patient,
+      device_id: deviceId,
+      baseline_temperature_c: assignedDevice.baseline_temperature_c,
+    });
+
+    return assignedDevice;
+  }
+
+  async resetMonitoringForPatient(patientId: string): Promise<DeviceRecord> {
+    const patient = this.patients.get(patientId);
+    const device = await this.getDeviceForPatient(patientId);
+
+    if (!patient || !device) {
+      throw new Error("Patient device not found.");
+    }
+
+    this.readings = this.readings.filter((reading) => reading.device_id !== device.device_id);
+
+    for (const [readingId, alert] of this.alerts.entries()) {
+      if (alert.device_id === device.device_id) {
+        this.alerts.delete(readingId);
+      }
+    }
+
+    const updatedDevice: DeviceRecord = {
+      ...device,
+      baseline_temperature_c: null,
+      updated_at: new Date().toISOString(),
+    };
+    this.devices.set(device.device_id, updatedDevice);
+
+    const currentSettings =
+      this.alertSettings.get(device.device_id) ?? createDefaultAlertSettings(device.device_id);
+    this.alertSettings.set(device.device_id, {
+      ...currentSettings,
+      baseline_temperature_c: null,
+    });
+
+    this.patients.set(patientId, {
+      ...patient,
+      baseline_temperature_c: null,
+    });
+
+    return updatedDevice;
+  }
+
   async setBaselineForPatient(
     patientId: string,
     baselineTemperatureC: number,
