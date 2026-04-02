@@ -1,17 +1,10 @@
 import { Router } from "express";
 
 import { evaluateReadingAndPersistAlert } from "../services/temperatureAlerts";
-import { getSupabaseConfig } from "../config/supabase";
-import { memoryStore } from "../store/memoryStore";
-import { ReadingsStore } from "../store/readingsStore";
-import { SupabaseStore } from "../store/supabaseStore";
+import { store } from "../store/store";
 import { Reading } from "../types/reading";
 
 const router = Router();
-const supabaseConfig = getSupabaseConfig();
-const store: ReadingsStore = supabaseConfig
-  ? new SupabaseStore(supabaseConfig)
-  : memoryStore;
 
 function isReadingPayload(body: unknown): body is Reading {
   if (!body || typeof body !== "object") {

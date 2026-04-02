@@ -3,6 +3,7 @@ import express from "express";
 
 import { loadEnv } from "./config/loadEnv";
 import { getSupabaseConfig } from "./config/supabase";
+import patientsRouter from "./routes/patients";
 import readingsRouter from "./routes/readings";
 
 loadEnv();
@@ -14,6 +15,7 @@ const supabaseConfig = getSupabaseConfig();
 app.use(cors());
 app.use(express.json());
 app.use("/api", readingsRouter);
+app.use("/api", patientsRouter);
 
 app.get("/", (_req, res) => {
   res.send("Smart bandage backend is running");

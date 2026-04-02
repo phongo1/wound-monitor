@@ -1,40 +1,54 @@
-import { useState } from 'react';
-import { Plus, User, Calendar } from 'lucide-react';
+import { useState } from "react";
+import { Calendar, Plus, User } from "lucide-react";
 
-export interface Patient {
-  id: string;
-  name: string;
-  age: number;
-  woundType: string;
-  admissionDate: string;
-}
+import type { CreatePatientInput, Patient } from "../../lib/api";
 
 interface PatientsTabProps {
   patients: Patient[];
-  onAddPatient: (patient: Omit<Patient, 'id'>) => void;
+  isLoading: boolean;
+  errorMessage: string;
+  onAddPatient: (patient: CreatePatientInput) => Promise<void>;
 }
 
-export default function PatientsTab({ patients, onAddPatient }: PatientsTabProps) {
+export default function PatientsTab({
+  patients,
+  isLoading,
+  errorMessage,
+  onAddPatient,
+}: PatientsTabProps) {
   const [showAddForm, setShowAddForm] = useState(false);
-  const [name, setName] = useState('');
-  const [age, setAge] = useState('');
-  const [woundType, setWoundType] = useState('');
-  const [admissionDate, setAdmissionDate] = useState('');
+  const [name, setName] = useState("");
+  const [age, setAge] = useState("");
+  const [woundType, setWoundType] = useState("");
+  const [admissionDate, setAdmissionDate] = useState("");
+  const [submitError, setSubmitError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (name && age && woundType && admissionDate) {
-      onAddPatient({
+    if (!name || !age || !woundType || !admissionDate) {
+      return;
+    }
+
+    setSubmitError("");
+    setIsSubmitting(true);
+
+    try {
+      await onAddPatient({
         name,
-        age: parseInt(age),
+        age: parseInt(age, 10),
         woundType,
         admissionDate,
       });
-      setName('');
-      setAge('');
-      setWoundType('');
-      setAdmissionDate('');
+      setName("");
+      setAge("");
+      setWoundType("");
+      setAdmissionDate("");
       setShowAddForm(false);
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "Failed to add patient.");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -54,6 +68,12 @@ export default function PatientsTab({ patients, onAddPatient }: PatientsTabProps
             Add Patient
           </button>
         </div>
+
+        {errorMessage && (
+          <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {errorMessage}
+          </div>
+        )}
 
         {showAddForm && (
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
@@ -123,6 +143,12 @@ export default function PatientsTab({ patients, onAddPatient }: PatientsTabProps
                 />
               </div>
 
+              {submitError && (
+                <div className="md:col-span-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {submitError}
+                </div>
+              )}
+
               <div className="md:col-span-2 flex gap-3 justify-end">
                 <button
                   type="button"
@@ -133,42 +159,56 @@ export default function PatientsTab({ patients, onAddPatient }: PatientsTabProps
                 </button>
                 <button
                   type="submit"
-                  className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                  disabled={isSubmitting}
+                  className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:bg-blue-300"
                 >
-                  Add Patient
+                  {isSubmitting ? "Adding..." : "Add Patient"}
                 </button>
               </div>
             </form>
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {patients.map((patient) => (
-            <div
-              key={patient.id}
-              className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow"
-            >
-              <div className="flex items-start justify-between mb-4">
-                <div className="bg-blue-100 p-3 rounded-lg">
-                  <User className="w-6 h-6 text-blue-600" />
+        {isLoading ? (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center text-gray-600">
+            Loading patients...
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {patients.map((patient) => (
+              <div
+                key={patient.id}
+                className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow"
+              >
+                <div className="flex items-start justify-between mb-4">
+                  <div className="bg-blue-100 p-3 rounded-lg">
+                    <User className="w-6 h-6 text-blue-600" />
+                  </div>
+                </div>
+
+                <h3 className="text-gray-900 mb-2">{patient.name}</h3>
+
+                <div className="space-y-2 text-gray-600">
+                  <p>Age: {patient.age} years</p>
+                  <p>Wound: {patient.woundType}</p>
+                  <p>Device ID: {patient.deviceId ?? "Not assigned"}</p>
+                  <p>
+                    Baseline:{" "}
+                    {patient.baselineTemperatureC !== null
+                      ? `${patient.baselineTemperatureC.toFixed(1)} °C`
+                      : "Not set"}
+                  </p>
+                  <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
+                    <Calendar className="w-4 h-4" />
+                    <span>Admitted: {patient.admissionDate}</span>
+                  </div>
                 </div>
               </div>
+            ))}
+          </div>
+        )}
 
-              <h3 className="text-gray-900 mb-2">{patient.name}</h3>
-
-              <div className="space-y-2 text-gray-600">
-                <p>Age: {patient.age} years</p>
-                <p>Wound: {patient.woundType}</p>
-                <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
-                  <Calendar className="w-4 h-4" />
-                  <span>Admitted: {patient.admissionDate}</span>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {patients.length === 0 && !showAddForm && (
+        {!isLoading && patients.length === 0 && !showAddForm && (
           <div className="text-center py-16">
             <div className="bg-gray-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
               <User className="w-10 h-10 text-gray-400" />

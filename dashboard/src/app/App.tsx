@@ -2,13 +2,18 @@ import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { Activity, LogOut, Monitor, Users } from "lucide-react";
 
+import {
+  createPatient,
+  listPatients,
+  type CreatePatientInput,
+  type Patient,
+} from "../lib/api";
 import { isSupabaseConfigured, supabase } from "../lib/supabase";
 import LandingPage from "./components/LandingPage";
 import LoginPage from "./components/LoginPage";
 import MonitorTab from "./components/MonitorTab";
 import PatientsTab from "./components/PatientsTab";
 import SignupPage from "./components/SignupPage";
-import type { Patient } from "./components/PatientsTab";
 
 type Page = "landing" | "login" | "signup";
 type Tab = "patients" | "monitor";
@@ -19,6 +24,8 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(!isSupabaseConfigured);
   const [patients, setPatients] = useState<Patient[]>([]);
+  const [patientsLoading, setPatientsLoading] = useState(false);
+  const [patientsError, setPatientsError] = useState("");
 
   useEffect(() => {
     if (!supabase) {
@@ -44,6 +51,7 @@ export default function App() {
 
       if (!nextSession) {
         setPatients([]);
+        setPatientsError("");
         setCurrentTab("patients");
         setCurrentPage("landing");
       }
@@ -54,6 +62,27 @@ export default function App() {
       subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+
+    void loadPatients();
+  }, [session]);
+
+  const loadPatients = async () => {
+    setPatientsLoading(true);
+    setPatientsError("");
+
+    try {
+      setPatients(await listPatients());
+    } catch (error) {
+      setPatientsError(error instanceof Error ? error.message : "Failed to load patients.");
+    } finally {
+      setPatientsLoading(false);
+    }
+  };
 
   const handleLogout = async () => {
     if (!supabase) {
@@ -67,12 +96,9 @@ export default function App() {
     await supabase.auth.signOut();
   };
 
-  const handleAddPatient = (patient: Omit<Patient, "id">) => {
-    const newPatient: Patient = {
-      ...patient,
-      id: Date.now().toString(),
-    };
-    setPatients([...patients, newPatient]);
+  const handleAddPatient = async (patient: CreatePatientInput) => {
+    const createdPatient = await createPatient(patient);
+    setPatients((currentPatients) => [createdPatient, ...currentPatients]);
   };
 
   const userEmail = session?.user.email ?? "";
@@ -143,9 +169,16 @@ export default function App() {
 
           <main className="flex-1 overflow-auto">
             {currentTab === "patients" && (
-              <PatientsTab patients={patients} onAddPatient={handleAddPatient} />
+              <PatientsTab
+                patients={patients}
+                isLoading={patientsLoading}
+                errorMessage={patientsError}
+                onAddPatient={handleAddPatient}
+              />
             )}
-            {currentTab === "monitor" && <MonitorTab patients={patients} />}
+            {currentTab === "monitor" && (
+              <MonitorTab patients={patients} onPatientsChanged={loadPatients} />
+            )}
           </main>
         </div>
       </div>

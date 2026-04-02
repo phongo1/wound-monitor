@@ -20,3 +20,9 @@ export type AlertRecord = {
   status?: AlertStatus;
   metadata: Record<string, unknown>;
 };
+
+export type StoredAlert = AlertRecord & {
+  id: string;
+  created_at: string;
+  resolved_at: string | null;
+};

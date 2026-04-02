@@ -1,6 +1,8 @@
 import { createDefaultAlertSettings } from "../alerting/defaults";
 import { SupabaseConfig } from "../config/supabase";
-import { AlertRecord, DeviceAlertSettings } from "../types/alerting";
+import { AlertRecord, DeviceAlertSettings, StoredAlert } from "../types/alerting";
+import { DeviceRecord } from "../types/device";
+import { CreatePatientInput, PatientRecord } from "../types/patient";
 import { Reading, StoredReading } from "../types/reading";
 import { ReadingQueryOptions, ReadingsStore } from "./readingsStore";
 
@@ -57,6 +59,191 @@ export class SupabaseStore implements ReadingsStore {
         method: "GET",
       },
     );
+  }
+
+  async listPatients(): Promise<PatientRecord[]> {
+    const patientRows = await this.requestTable<
+      Array<{
+        id: string;
+        name: string;
+        age: number;
+        wound_type: string;
+        admission_date: string;
+      }>
+    >(
+      "patients",
+      this.buildQuery({
+        select: "id,name,age,wound_type,admission_date",
+        order: "admission_date.desc",
+      }),
+      { method: "GET" },
+    );
+
+    const deviceRows = await this.requestTable<
+      Array<{
+        device_id: string;
+        patient_id: string | null;
+        baseline_temperature_c: number | null;
+      }>
+    >(
+      this.config.devicesTable,
+      this.buildQuery({
+        select: "device_id,patient_id,baseline_temperature_c",
+      }),
+      { method: "GET" },
+    );
+
+    return patientRows.map((patient) => mapPatientRow(patient, deviceRows));
+  }
+
+  async createPatient(input: CreatePatientInput): Promise<PatientRecord> {
+    const patientRows = await this.requestTable<
+      Array<{
+        id: string;
+        name: string;
+        age: number;
+        wound_type: string;
+        admission_date: string;
+      }>
+    >(
+      "patients",
+      this.buildQuery({
+        select: "id,name,age,wound_type,admission_date",
+      }),
+      {
+        method: "POST",
+        headers: {
+          Prefer: "return=representation",
+        },
+        body: JSON.stringify([
+          {
+            name: input.name,
+            age: input.age,
+            wound_type: input.wound_type,
+            admission_date: input.admission_date,
+          },
+        ]),
+      },
+    );
+
+    const patient = patientRows[0];
+    if (!patient) {
+      throw new Error("Supabase did not return the inserted patient.");
+    }
+
+    const deviceId = patient.id;
+    await this.requestTable(
+      this.config.devicesTable,
+      this.buildQuery({}),
+      {
+        method: "POST",
+        headers: {
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify([
+          {
+            device_id: deviceId,
+            patient_id: patient.id,
+            label: `${patient.name} sensor`,
+            status: "active",
+          },
+        ]),
+      },
+    );
+
+    return {
+      id: patient.id,
+      name: patient.name,
+      age: patient.age,
+      wound_type: patient.wound_type,
+      admission_date: patient.admission_date,
+      device_id: deviceId,
+      baseline_temperature_c: null,
+    };
+  }
+
+  async getPatient(patientId: string): Promise<PatientRecord | null> {
+    const patientRows = await this.requestTable<
+      Array<{
+        id: string;
+        name: string;
+        age: number;
+        wound_type: string;
+        admission_date: string;
+      }>
+    >(
+      "patients",
+      this.buildQuery({
+        select: "id,name,age,wound_type,admission_date",
+        id: `eq.${patientId}`,
+        limit: 1,
+      }),
+      { method: "GET" },
+    );
+
+    const patient = patientRows[0];
+    if (!patient) {
+      return null;
+    }
+
+    const device = await this.getDeviceForPatient(patientId);
+    return {
+      id: patient.id,
+      name: patient.name,
+      age: patient.age,
+      wound_type: patient.wound_type,
+      admission_date: patient.admission_date,
+      device_id: device?.device_id ?? null,
+      baseline_temperature_c: device?.baseline_temperature_c ?? null,
+    };
+  }
+
+  async getDeviceForPatient(patientId: string): Promise<DeviceRecord | null> {
+    const deviceRows = await this.requestTable<DeviceRecord[]>(
+      this.config.devicesTable,
+      this.buildQuery({
+        select: "device_id,patient_id,label,baseline_temperature_c,status,created_at,updated_at",
+        patient_id: `eq.${patientId}`,
+        limit: 1,
+      }),
+      { method: "GET" },
+    );
+
+    return deviceRows[0] ?? null;
+  }
+
+  async setBaselineForPatient(
+    patientId: string,
+    baselineTemperatureC: number,
+  ): Promise<DeviceRecord> {
+    const device = await this.getDeviceForPatient(patientId);
+    if (!device) {
+      throw new Error("Patient device not found.");
+    }
+
+    const deviceRows = await this.requestTable<DeviceRecord[]>(
+      this.config.devicesTable,
+      this.buildQuery({
+        select: "device_id,patient_id,label,baseline_temperature_c,status,created_at,updated_at",
+        device_id: `eq.${device.device_id}`,
+      }),
+      {
+        method: "PATCH",
+        headers: {
+          Prefer: "return=representation",
+        },
+        body: JSON.stringify({
+          baseline_temperature_c: baselineTemperatureC,
+        }),
+      },
+    );
+
+    const updatedDevice = deviceRows[0];
+    if (!updatedDevice) {
+      throw new Error("Failed to update device baseline.");
+    }
+
+    return updatedDevice;
   }
 
   async historyForDevice(
@@ -143,6 +330,22 @@ export class SupabaseStore implements ReadingsStore {
     };
   }
 
+  async latestAlertForDevice(deviceId: string): Promise<StoredAlert | null> {
+    const rows = await this.requestTable<StoredAlert[]>(
+      this.config.alertsTable,
+      this.buildQuery({
+        select:
+          "id,device_id,reading_id,severity,kind,message,status,metadata,created_at,resolved_at",
+        device_id: `eq.${deviceId}`,
+        order: "created_at.desc",
+        limit: 1,
+      }),
+      { method: "GET" },
+    );
+
+    return rows[0] ?? null;
+  }
+
   async createAlert(alert: AlertRecord): Promise<void> {
     await this.requestTable(
       this.config.alertsTable,
@@ -212,4 +415,31 @@ export class SupabaseStore implements ReadingsStore {
     const baseUrl = this.config.url.replace(/\/+$/, "");
     return `${baseUrl}/rest/v1/${encodeURIComponent(table)}`;
   }
+}
+
+function mapPatientRow(
+  patient: {
+    id: string;
+    name: string;
+    age: number;
+    wound_type: string;
+    admission_date: string;
+  },
+  devices: Array<{
+    device_id: string;
+    patient_id: string | null;
+    baseline_temperature_c: number | null;
+  }>,
+): PatientRecord {
+  const device = devices.find((candidate) => candidate.patient_id === patient.id);
+
+  return {
+    id: patient.id,
+    name: patient.name,
+    age: patient.age,
+    wound_type: patient.wound_type,
+    admission_date: patient.admission_date,
+    device_id: device?.device_id ?? null,
+    baseline_temperature_c: device?.baseline_temperature_c ?? null,
+  };
 }
