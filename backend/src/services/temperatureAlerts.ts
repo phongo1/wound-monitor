@@ -2,6 +2,15 @@ import { ReadingsStore } from "../store/readingsStore";
 import { AlertRecord, AlertSeverity, DeviceAlertSettings } from "../types/alerting";
 import { StoredReading } from "../types/reading";
 
+const PLAUSIBLE_MIN_TEMPERATURE_C = 30;
+const PLAUSIBLE_MAX_TEMPERATURE_C = 45;
+const MOVING_AVERAGE_WINDOW = 5;
+
+type SmoothedReading = {
+  source: StoredReading;
+  temperature_c: number;
+};
+
 export type TemperatureHeuristicResult = {
   device_id: string;
   baseline_temperature_c: number | null;
@@ -60,16 +69,19 @@ export function evaluateTemperatureHeuristic(
 
     return left.id.localeCompare(right.id);
   });
+  const plausibleReadings = orderedReadings.filter(
+    (reading) =>
+      reading.temperature_c >= PLAUSIBLE_MIN_TEMPERATURE_C &&
+      reading.temperature_c <= PLAUSIBLE_MAX_TEMPERATURE_C,
+  );
+  const smoothedReadings = buildMovingAverageReadings(plausibleReadings, MOVING_AVERAGE_WINDOW);
 
-  const latestReading = orderedReadings[orderedReadings.length - 1] ?? null;
+  const latestReading = plausibleReadings[plausibleReadings.length - 1] ?? null;
+  const latestSmoothedReading = smoothedReadings[smoothedReadings.length - 1] ?? null;
   const baselineTemperatureC = settings.baseline_temperature_c;
-  const priorReadings = latestReading
-    ? orderedReadings.filter((reading) => reading.timestamp < latestReading.timestamp)
-    : [];
-  const coldSpotCandidates = getColdSpotCandidates(orderedReadings, settings);
-  const priorColdSpotCandidates = getColdSpotCandidates(priorReadings, settings);
-  const coldSpotReading = getColdestReading(coldSpotCandidates);
-  const priorColdSpotReading = getColdestReading(priorColdSpotCandidates);
+  const coldSpotReading = getSustainedColdSpotReading(smoothedReadings, settings);
+  const recentSmoothed = smoothedReadings.slice(-10);
+  const recentPlausibleReadings = plausibleReadings.slice(-10);
 
   let latestBelowBaselineC: number | null = null;
   let latestAboveBaselineC: number | null = null;
@@ -80,42 +92,59 @@ export function evaluateTemperatureHeuristic(
   let reboundReadingCount = 0;
   let severity: AlertSeverity | null = null;
 
-  if (baselineTemperatureC !== null && latestReading) {
+  if (baselineTemperatureC !== null && latestReading && latestSmoothedReading) {
     latestBelowBaselineC = Math.max(
       0,
-      baselineTemperatureC - latestReading.temperature_c,
+      baselineTemperatureC - latestSmoothedReading.temperature_c,
     );
     latestAboveBaselineC = Math.max(
       0,
-      latestReading.temperature_c - baselineTemperatureC,
+      latestSmoothedReading.temperature_c - baselineTemperatureC,
     );
 
     if (coldSpotReading) {
       coldSpotDepthC = baselineTemperatureC - coldSpotReading.temperature_c;
     }
 
-    if (latestBelowBaselineC >= settings.cold_spot_delta_c) {
+    const hasSustainedColdSpot = coldSpotReading !== null;
+    if (hasSustainedColdSpot) {
       severity = "warning";
     }
 
-    if (priorColdSpotReading) {
-      reboundDeltaC = latestReading.temperature_c - priorColdSpotReading.temperature_c;
-      const reboundElapsedMs = latestReading.timestamp - priorColdSpotReading.timestamp;
-      reboundReadingCount = orderedReadings.filter(
-        (reading) => reading.timestamp >= priorColdSpotReading.timestamp,
+    if (recentSmoothed.length >= 10) {
+      const smoothedAbove05Count = recentSmoothed.filter(
+        (reading) => reading.temperature_c - baselineTemperatureC > 0.5,
       ).length;
+      const smoothedRecentTrend =
+        recentSmoothed[recentSmoothed.length - 1]!.temperature_c - recentSmoothed[0]!.temperature_c;
+      const isInflammationWarning =
+        smoothedAbove05Count >= 8 && smoothedRecentTrend > 0;
 
+      if (isInflammationWarning) {
+        severity = "warning";
+      }
+    }
+
+    if (recentPlausibleReadings.length >= 10) {
+      const readingsAbove10Count = recentPlausibleReadings.filter(
+        (reading) => reading.temperature_c - baselineTemperatureC > 1.0,
+      ).length;
+      const overallRiseC =
+        recentPlausibleReadings[recentPlausibleReadings.length - 1]!.temperature_c -
+        recentPlausibleReadings[0]!.temperature_c;
+      const isInflammationRisk = readingsAbove10Count >= 8 && overallRiseC >= 1.0;
+
+      reboundDeltaC = overallRiseC;
+      const reboundElapsedMs =
+        recentPlausibleReadings[recentPlausibleReadings.length - 1]!.timestamp -
+        recentPlausibleReadings[0]!.timestamp;
+      reboundReadingCount = recentPlausibleReadings.length;
       if (reboundElapsedMs > 0) {
         reboundElapsedMinutes = reboundElapsedMs / 60000;
-        reboundRateCPerHour = (reboundDeltaC * 3600000) / reboundElapsedMs;
+        reboundRateCPerHour = (overallRiseC * 3600000) / reboundElapsedMs;
       }
 
-      if (
-        reboundReadingCount >= settings.min_rebound_readings &&
-        latestAboveBaselineC >= settings.inflammation_delta_c &&
-        reboundRateCPerHour !== null &&
-        reboundRateCPerHour >= settings.rebound_rate_c_per_hour
-      ) {
+      if (isInflammationRisk) {
         severity = "risk";
       }
     }
@@ -158,14 +187,19 @@ function buildAlertRecord(
       return null;
     }
 
+    const isInflammationWarning = result.cold_spot_reading === null;
     return {
       device_id: result.device_id,
       reading_id: readingId,
       severity: "warning",
-      kind: "cold_spot",
-      message: `Cold spot detected: wound temperature is ${result.latest_below_baseline_c.toFixed(
-        2,
-      )} C below baseline ${result.baseline_temperature_c.toFixed(2)} C.`,
+      kind: isInflammationWarning ? "inflammation_warning" : "cold_spot",
+      message: isInflammationWarning
+        ? `Inflammation warning detected: sustained temperatures are above baseline ${result.baseline_temperature_c.toFixed(
+            2,
+          )} C with a positive trend.`
+        : `Cold spot detected: wound temperature is ${result.latest_below_baseline_c.toFixed(
+            2,
+          )} C below baseline ${result.baseline_temperature_c.toFixed(2)} C.`,
       status: "open",
       metadata: {
         baseline_temperature_c: result.baseline_temperature_c,
@@ -186,14 +220,10 @@ function buildAlertRecord(
     device_id: result.device_id,
     reading_id: readingId,
     severity: "risk",
-    kind: "cold_spot_rebound_above_baseline",
-    message: `Cold spot rebound detected: temperature recovered from ${(
-      result.cold_spot_reading?.temperature_c ?? 0
-    ).toFixed(2)} C to ${(result.latest_reading?.temperature_c ?? 0).toFixed(
-      2,
-    )} C and is ${(result.latest_above_baseline_c ?? 0).toFixed(
-      2,
-    )} C above baseline.`,
+    kind: "inflammation_risk",
+    message: `Inflammation risk detected: sustained elevated readings exceed +1.0 C over baseline with an overall rise of ${(
+      result.rebound_delta_c ?? 0
+    ).toFixed(2)} C.`,
     status: "open",
     metadata: {
       baseline_temperature_c: result.baseline_temperature_c,
@@ -215,9 +245,9 @@ function buildAlertRecord(
 }
 
 function getColdSpotCandidates(
-  readings: StoredReading[],
+  readings: SmoothedReading[],
   settings: DeviceAlertSettings,
-): StoredReading[] {
+): SmoothedReading[] {
   if (settings.baseline_temperature_c === null) {
     return [];
   }
@@ -237,4 +267,57 @@ function getColdestReading(readings: StoredReading[]): StoredReading | null {
 
     return coldest;
   }, null);
+}
+
+function buildMovingAverageReadings(
+  readings: StoredReading[],
+  windowSize: number,
+): SmoothedReading[] {
+  const smoothed: SmoothedReading[] = [];
+  for (let index = windowSize - 1; index < readings.length; index += 1) {
+    const window = readings.slice(index - (windowSize - 1), index + 1);
+    const averageTemperatureC =
+      window.reduce((sum, reading) => sum + reading.temperature_c, 0) / window.length;
+    smoothed.push({
+      source: readings[index]!,
+      temperature_c: averageTemperatureC,
+    });
+  }
+  return smoothed;
+}
+
+function getSustainedColdSpotReading(
+  smoothedReadings: SmoothedReading[],
+  settings: DeviceAlertSettings,
+): StoredReading | null {
+  const coldSpotIndexes = getColdSpotCandidates(smoothedReadings, settings).map((candidate) =>
+    smoothedReadings.findIndex((smoothed) => smoothed.source.id === candidate.source.id),
+  );
+  if (coldSpotIndexes.length < 2) {
+    return null;
+  }
+
+  const sustainedCandidates = coldSpotIndexes
+    .filter((index) => {
+      const hasPreviousNeighbor = coldSpotIndexes.includes(index - 1);
+      const hasNextNeighbor = coldSpotIndexes.includes(index + 1);
+      return hasPreviousNeighbor || hasNextNeighbor;
+    })
+    .map((index) => smoothedReadings[index]!)
+    .filter(Boolean);
+
+  if (sustainedCandidates.length === 0) {
+    return null;
+  }
+
+  const coldest = sustainedCandidates.reduce<SmoothedReading | null>(
+    (currentColdest, candidate) => {
+      if (!currentColdest || candidate.temperature_c < currentColdest.temperature_c) {
+        return candidate;
+      }
+      return currentColdest;
+    },
+    null,
+  );
+  return coldest?.source ?? null;
 }

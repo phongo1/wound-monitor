@@ -1,18 +1,18 @@
 # Temperature Heuristic
 
-This backend uses a two-stage wound temperature heuristic:
+This backend uses a moving-average based wound temperature heuristic:
 
-1. A **cold spot** is treated as a `warning`.
-2. A **cold spot followed by a rapid rebound above baseline** is treated as `risk`.
+1. A **sustained cold spot** can be treated as `warning`.
+2. A **sustained mild-above-baseline trend** can be treated as `warning`.
+3. A **sustained strong-above-baseline rise** is treated as `risk`.
 
 ## Why
 
-The model assumes this sequence is clinically meaningful:
+The model assumes these temperature patterns are meaningful:
 
-- The wound site first gets colder than expected relative to its baseline.
-- That can indicate reduced blood flow to the wound site.
-- If the temperature then rebounds quickly and rises above baseline, that can indicate inflammation.
-- That rebound pattern is treated as a stronger infection signal than a simple isolated rise.
+- A sustained drop below baseline can indicate a local cold spot.
+- Sustained elevations above baseline can indicate inflammation risk.
+- Isolated spikes/dropouts should be suppressed by smoothing and persistence rules.
 
 ## Inputs
 
@@ -30,63 +30,29 @@ Relevant settings:
 - `inflammation_delta_c`
 - `rebound_rate_c_per_hour`
 
+Reading pre-processing rules:
+
+- Ignore impossible sensor values outside `30 C` to `45 C`.
+- Use a 5-reading moving average for alert evaluation.
+- If baseline is not set, estimate baseline from the first 20 plausible readings.
+
 If a device has no `device_alert_settings` row, the backend uses defaults from [defaults.ts](/Users/phongle/dev/smart-bandage/backend/src/alerting/defaults.ts).
 
 If a device has no `baseline_temperature_c`, the heuristic returns no alert.
 
-## Warning Rule
+## Warning Rules
 
-A reading is a `warning` when the **latest** reading is below baseline by at least `cold_spot_delta_c`.
+`warning` can be raised by either of these:
 
-Formula:
-
-```text
-baseline_temperature_c - latest_temperature_c >= cold_spot_delta_c
-```
-
-Example:
-
-- baseline = `34.2 C`
-- latest = `33.5 C`
-- drop = `0.7 C`
-- if `cold_spot_delta_c = 0.5`, this becomes a `warning`
+- **Cold spot warning**: a cold-spot condition is present in neighboring smoothed readings (not a single isolated drop).
+- **Inflammation warning**: at least `8` of the last `10` smoothed readings are above baseline by `+0.5 C`, and recent trend is positive.
 
 ## Risk Rule
 
-A reading is `risk` when all of these are true:
+`risk` is raised when both are true:
 
-- there was an earlier cold spot inside the active time window
-- the latest reading is now above baseline by at least `inflammation_delta_c`
-- the rebound from the cold spot to the latest reading is fast enough
-- there are at least `min_rebound_readings` from the cold spot onward
-
-Formulas:
-
-```text
-baseline_temperature_c - cold_spot_temperature_c >= cold_spot_delta_c
-latest_temperature_c - baseline_temperature_c >= inflammation_delta_c
-rebound_rate_c_per_hour =
-  (latest_temperature_c - cold_spot_temperature_c) / hours_since_cold_spot
-rebound_rate_c_per_hour >= rebound_rate_c_per_hour_threshold
-```
-
-Example:
-
-- baseline = `34.2 C`
-- cold spot = `33.4 C`
-- latest = `34.9 C`
-- cold spot depth = `0.8 C` below baseline
-- rebound above baseline = `0.7 C`
-- rebound delta = `1.5 C`
-- if that rebound happened over `90 minutes`, the rate is `1.0 C/hour`
-
-With thresholds:
-
-- `cold_spot_delta_c = 0.5`
-- `inflammation_delta_c = 0.5`
-- `rebound_rate_c_per_hour = 0.6`
-
-that sequence becomes `risk`.
+- at least `8` of the last `10` plausible readings are above baseline by `+1.0 C`
+- overall rise across that 10-reading window is at least `+1.0 C`
 
 ## Windowing
 
@@ -113,12 +79,14 @@ This prevents a below-baseline latest reading from being treated as both the col
 The backend writes these alert kinds:
 
 - `cold_spot`
-- `cold_spot_rebound_above_baseline`
+- `inflammation_warning`
+- `inflammation_risk`
 
 Severity mapping:
 
 - `cold_spot` => `warning`
-- `cold_spot_rebound_above_baseline` => `risk`
+- `inflammation_warning` => `warning`
+- `inflammation_risk` => `risk`
 
 ## Current Defaults
 

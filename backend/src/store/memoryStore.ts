@@ -7,6 +7,10 @@ import { CreatePatientInput, PatientRecord } from "../types/patient";
 import { Reading, StoredReading } from "../types/reading";
 import { ReadingQueryOptions, ReadingsStore } from "./readingsStore";
 
+const PLAUSIBLE_MIN_TEMPERATURE_C = 30;
+const PLAUSIBLE_MAX_TEMPERATURE_C = 45;
+const BASELINE_SAMPLE_SIZE = 20;
+
 class MemoryStore implements ReadingsStore {
   private readonly patients = new Map<string, PatientRecord>();
   private readonly devices = new Map<string, DeviceRecord>();
@@ -86,6 +90,7 @@ class MemoryStore implements ReadingsStore {
     deviceId: string,
     baselineTemperatureC: number,
   ): Promise<DeviceRecord | null> {
+    void baselineTemperatureC;
     const device = this.devices.get(deviceId);
     if (!device) {
       return null;
@@ -95,9 +100,27 @@ class MemoryStore implements ReadingsStore {
       return device;
     }
 
+    const baselineCandidates = this.readings
+      .filter((reading) => reading.device_id === deviceId)
+      .sort((left, right) => left.timestamp - right.timestamp)
+      .filter(
+        (reading) =>
+          reading.temperature_c >= PLAUSIBLE_MIN_TEMPERATURE_C &&
+          reading.temperature_c <= PLAUSIBLE_MAX_TEMPERATURE_C,
+      )
+      .slice(0, BASELINE_SAMPLE_SIZE);
+
+    if (baselineCandidates.length < BASELINE_SAMPLE_SIZE) {
+      return device;
+    }
+
+    const computedBaselineTemperatureC =
+      baselineCandidates.reduce((sum, reading) => sum + reading.temperature_c, 0) /
+      baselineCandidates.length;
+
     const updatedDevice: DeviceRecord = {
       ...device,
-      baseline_temperature_c: baselineTemperatureC,
+      baseline_temperature_c: computedBaselineTemperatureC,
       updated_at: new Date().toISOString(),
     };
     this.devices.set(deviceId, updatedDevice);
@@ -106,7 +129,7 @@ class MemoryStore implements ReadingsStore {
       this.alertSettings.get(deviceId) ?? createDefaultAlertSettings(deviceId);
     this.alertSettings.set(deviceId, {
       ...currentSettings,
-      baseline_temperature_c: baselineTemperatureC,
+      baseline_temperature_c: computedBaselineTemperatureC,
     });
 
     if (updatedDevice.patient_id) {
@@ -114,7 +137,7 @@ class MemoryStore implements ReadingsStore {
       if (patient) {
         this.patients.set(updatedDevice.patient_id, {
           ...patient,
-          baseline_temperature_c: baselineTemperatureC,
+          baseline_temperature_c: computedBaselineTemperatureC,
         });
       }
     }

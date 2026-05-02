@@ -6,6 +6,10 @@ import { CreatePatientInput, PatientRecord } from "../types/patient";
 import { Reading, StoredReading } from "../types/reading";
 import { ReadingQueryOptions, ReadingsStore } from "./readingsStore";
 
+const PLAUSIBLE_MIN_TEMPERATURE_C = 30;
+const PLAUSIBLE_MAX_TEMPERATURE_C = 45;
+const BASELINE_SAMPLE_SIZE = 20;
+
 export class SupabaseStore implements ReadingsStore {
   constructor(private readonly config: SupabaseConfig) {}
 
@@ -216,6 +220,7 @@ export class SupabaseStore implements ReadingsStore {
     deviceId: string,
     baselineTemperatureC: number,
   ): Promise<DeviceRecord | null> {
+    void baselineTemperatureC;
     const deviceRows = await this.requestTable<DeviceRecord[]>(
       this.config.devicesTable,
       this.buildQuery({
@@ -235,6 +240,22 @@ export class SupabaseStore implements ReadingsStore {
       return device;
     }
 
+    const baselineCandidates = (await this.historyForDevice(deviceId))
+      .filter(
+        (reading) =>
+          reading.temperature_c >= PLAUSIBLE_MIN_TEMPERATURE_C &&
+          reading.temperature_c <= PLAUSIBLE_MAX_TEMPERATURE_C,
+      )
+      .slice(0, BASELINE_SAMPLE_SIZE);
+
+    if (baselineCandidates.length < BASELINE_SAMPLE_SIZE) {
+      return device;
+    }
+
+    const computedBaselineTemperatureC =
+      baselineCandidates.reduce((sum, reading) => sum + reading.temperature_c, 0) /
+      baselineCandidates.length;
+
     const updatedRows = await this.requestTable<DeviceRecord[]>(
       this.config.devicesTable,
       this.buildQuery({
@@ -247,7 +268,7 @@ export class SupabaseStore implements ReadingsStore {
           Prefer: "return=representation",
         },
         body: JSON.stringify({
-          baseline_temperature_c: baselineTemperatureC,
+          baseline_temperature_c: computedBaselineTemperatureC,
         }),
       },
     );
