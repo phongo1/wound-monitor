@@ -20,8 +20,57 @@ function isReadingPayload(body: unknown): body is Reading {
   return (
     typeof candidate.device_id === "string" &&
     typeof candidate.temperature_c === "number" &&
-    typeof candidate.timestamp === "number"
+    typeof candidate.timestamp === "number" &&
+    (candidate.sequence_number === undefined ||
+      candidate.sequence_number === null ||
+      typeof candidate.sequence_number === "number")
   );
+}
+
+function parsePositiveInteger(value: unknown): number | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function buildReliabilityReport(readings: Reading[]) {
+  const sequencedReadings = readings
+    .filter(
+      (reading): reading is Reading & { sequence_number: number } =>
+        typeof reading.sequence_number === "number" &&
+        Number.isInteger(reading.sequence_number) &&
+        reading.sequence_number > 0,
+    )
+    .sort((left, right) => left.sequence_number - right.sequence_number);
+
+  const receivedCount = sequencedReadings.length;
+  const uniqueSequences = new Set(
+    sequencedReadings.map((reading) => reading.sequence_number),
+  );
+  const duplicateCount = receivedCount - uniqueSequences.size;
+  const firstSequenceNumber = sequencedReadings[0]?.sequence_number ?? null;
+  const lastSequenceNumber =
+    sequencedReadings[sequencedReadings.length - 1]?.sequence_number ?? null;
+  const expectedCount =
+    firstSequenceNumber === null || lastSequenceNumber === null
+      ? 0
+      : lastSequenceNumber - firstSequenceNumber + 1;
+  const missingCount =
+    expectedCount === 0 ? 0 : expectedCount - uniqueSequences.size;
+
+  return {
+    received_count: receivedCount,
+    unique_count: uniqueSequences.size,
+    expected_count: expectedCount,
+    missing_count: missingCount,
+    duplicate_count: duplicateCount,
+    dropout_rate: expectedCount === 0 ? 0 : missingCount / expectedCount,
+    first_sequence_number: firstSequenceNumber,
+    last_sequence_number: lastSequenceNumber,
+  };
 }
 
 router.post("/readings", async (req, res) => {
@@ -101,6 +150,31 @@ router.get("/history", async (_req, res) => {
   } catch (error) {
     return res.status(500).json({
       error: "Failed to load reading history",
+      details: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+router.get("/reliability", async (req, res) => {
+  const deviceId =
+    typeof req.query.device_id === "string" ? req.query.device_id.trim() : "";
+  const requestedLimit = parsePositiveInteger(req.query.last);
+  const limit = Math.min(requestedLimit ?? 1000, 10000);
+
+  if (!deviceId) {
+    return res.status(400).json({ error: "device_id is required" });
+  }
+
+  try {
+    const readings = await store.historyForDevice(deviceId, { limit });
+    return res.json({
+      device_id: deviceId,
+      requested_last: limit,
+      ...buildReliabilityReport(readings),
+    });
+  } catch (error) {
+    return res.status(500).json({
+      error: "Failed to build reliability report",
       details: error instanceof Error ? error.message : "Unknown error",
     });
   }

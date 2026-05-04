@@ -17,7 +17,7 @@ export class SupabaseStore implements ReadingsStore {
     const rows = await this.requestTable<StoredReading[]>(
       this.config.readingsTable,
       this.buildQuery({
-        select: "id,device_id,temperature_c,timestamp,created_at",
+        select: "id,device_id,temperature_c,timestamp,sequence_number,created_at",
       }),
       {
         method: "POST",
@@ -40,7 +40,7 @@ export class SupabaseStore implements ReadingsStore {
     const rows = await this.requestTable<StoredReading[]>(
       this.config.readingsTable,
       this.buildQuery({
-        select: "id,device_id,temperature_c,timestamp,created_at",
+        select: "id,device_id,temperature_c,timestamp,sequence_number,created_at",
         order: "timestamp.desc",
         limit: 1,
       }),
@@ -56,7 +56,7 @@ export class SupabaseStore implements ReadingsStore {
     return this.requestTable<StoredReading[]>(
       this.config.readingsTable,
       this.buildQuery({
-        select: "id,device_id,temperature_c,timestamp,created_at",
+        select: "id,device_id,temperature_c,timestamp,sequence_number,created_at",
         order: "timestamp.asc",
       }),
       {
@@ -471,9 +471,15 @@ export class SupabaseStore implements ReadingsStore {
     options?: ReadingQueryOptions,
   ): Promise<StoredReading[]> {
     const searchParams = new URLSearchParams();
-    searchParams.set("select", "id,device_id,temperature_c,timestamp,created_at");
+    searchParams.set(
+      "select",
+      "id,device_id,temperature_c,timestamp,sequence_number,created_at",
+    );
     searchParams.set("device_id", `eq.${deviceId}`);
-    searchParams.set("order", "timestamp.asc");
+    searchParams.set(
+      "order",
+      options?.limit === undefined ? "timestamp.asc" : "timestamp.desc",
+    );
 
     if (
       options?.sinceTimestamp !== undefined &&
@@ -493,13 +499,17 @@ export class SupabaseStore implements ReadingsStore {
       searchParams.set("limit", String(options.limit));
     }
 
-    return this.requestTable<StoredReading[]>(
+    const rows = await this.requestTable<StoredReading[]>(
       this.config.readingsTable,
       this.searchParamsToQuery(searchParams),
       {
         method: "GET",
       },
     );
+
+    return options?.limit === undefined
+      ? rows
+      : rows.sort((left, right) => left.timestamp - right.timestamp);
   }
 
   async getAlertSettings(deviceId: string): Promise<DeviceAlertSettings> {
