@@ -5,16 +5,11 @@ Monorepo for smart-bandage:
 - `firmware/` (ESP32 + TMP117 placeholders)
 - `backend/` (Express + TypeScript API)
 - `dashboard/` (React + TypeScript UI)
+- `test-data/` (synthetic temperature datasets + heuristic verification script)
 
 ## Data flow
 
 `TMP117 -> ESP32 firmware -> WiFi HTTP POST -> backend API -> React dashboard`
-
-## Current Scope
-
-- Temperature only
-- In-memory backend storage
-- No auth, DB, Docker, MQTT, WebSockets, or cloud setup
 
 ## Quick start
 

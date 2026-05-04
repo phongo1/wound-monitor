@@ -2,7 +2,7 @@ import { DeviceAlertSettings } from "../types/alerting";
 
 export const DEFAULT_ALERT_WINDOW_MINUTES = 120;
 export const DEFAULT_MIN_REBOUND_READINGS = 2;
-export const DEFAULT_COLD_SPOT_DELTA_C = 0.5;
+export const DEFAULT_COLD_SPOT_DELTA_C = 1.5;
 export const DEFAULT_INFLAMMATION_DELTA_C = 0.5;
 export const DEFAULT_REBOUND_RATE_C_PER_HOUR = 0.6;
 

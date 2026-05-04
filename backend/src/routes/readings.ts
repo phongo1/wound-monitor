@@ -25,6 +25,8 @@ function isReadingPayload(body: unknown): body is Reading {
 }
 
 router.post("/readings", async (req, res) => {
+  const backendReceivedAt = Date.now();
+
   if (!isReadingPayload(req.body)) {
     return res.status(400).json({ error: "Invalid reading payload" });
   }
@@ -35,19 +37,35 @@ router.post("/readings", async (req, res) => {
       timestamp: normalizeTimestamp(req.body.timestamp),
     };
     const storedReading = await store.add(reading);
-    await store.ensureBaselineForDevice(storedReading.device_id, storedReading.temperature_c);
+    await store.ensureBaselineForDevice(
+      storedReading.device_id,
+      storedReading.temperature_c,
+    );
 
     try {
-      const heuristic = await evaluateReadingAndPersistAlert(store, storedReading);
+      const heuristic = await evaluateReadingAndPersistAlert(
+        store,
+        storedReading,
+      );
+      const alertDoneAt = Date.now();
       return res.status(201).json({
         ok: true,
         reading: storedReading,
         heuristic,
+        latency: {
+          alert_latency_ms: alertDoneAt - backendReceivedAt,
+          e2e_ms: alertDoneAt - reading.timestamp,
+        },
       });
     } catch (error) {
+      const alertDoneAt = Date.now();
       return res.status(201).json({
         ok: true,
         reading: storedReading,
+        latency: {
+          alert_latency_ms: alertDoneAt - backendReceivedAt,
+          e2e_ms: alertDoneAt - reading.timestamp,
+        },
         alerting: {
           ok: false,
           details: error instanceof Error ? error.message : "Unknown error",

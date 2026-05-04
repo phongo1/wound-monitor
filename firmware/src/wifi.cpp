@@ -18,7 +18,7 @@ bool wifiConnect(const char* ssid, const char* password, unsigned long timeoutMs
   return true;
 }
 
-bool sendReading(const char* backendUrl, const char* deviceId, float temperatureC, unsigned long timestamp) {
+bool sendReading(const char* backendUrl, const char* deviceId, float temperatureC, uint64_t timestamp) {
   if (WiFi.status() != WL_CONNECTED) {
     return false;
   }
@@ -29,14 +29,16 @@ bool sendReading(const char* backendUrl, const char* deviceId, float temperature
   http.begin(endpoint);
   http.addHeader("Content-Type", "application/json");
 
-  // Keep payload manual and obvious for learning.
+  char timestampBuffer[24];
+  snprintf(timestampBuffer, sizeof(timestampBuffer), "%llu", timestamp);
+
   String payload = "{\"device_id\":\"" + String(deviceId) +
                    "\",\"temperature_c\":" + String(temperatureC, 2) +
-                   ",\"timestamp\":" + String(timestamp) + "}";
+                   ",\"timestamp\":" + String(timestampBuffer) + "}";
 
   int statusCode = http.POST(payload);
+
   http.end();
 
-  // TODO: Add better error logging/retry strategy later.
   return statusCode >= 200 && statusCode < 300;
 }

@@ -468,9 +468,9 @@ export default function MonitorTab({ patients, onPatientsChanged }: MonitorTabPr
             ) : (
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-8 text-center">
                 <Thermometer className="w-12 h-12 text-blue-600 mx-auto mb-4" />
-                <h3 className="text-gray-900 mb-2">Record the First Temperature</h3>
+                <h3 className="text-gray-900 mb-2">Begin Recording Temperatures</h3>
                 <p className="text-gray-600">
-                  The first temperature reading will become the baseline automatically
+                  The baseline will be estimated automatically after enough temperature readings are recorded.
                 </p>
               </div>
             )}

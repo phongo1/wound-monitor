@@ -1,15 +1,31 @@
 import { ReadingsStore } from "../store/readingsStore";
-import { AlertRecord, AlertSeverity, DeviceAlertSettings } from "../types/alerting";
+import {
+  AlertRecord,
+  AlertSeverity,
+  DeviceAlertSettings,
+} from "../types/alerting";
 import { StoredReading } from "../types/reading";
 
 const PLAUSIBLE_MIN_TEMPERATURE_C = 30;
 const PLAUSIBLE_MAX_TEMPERATURE_C = 45;
-const MOVING_AVERAGE_WINDOW = 5;
+const MOVING_AVERAGE_WINDOW = 20;
+const RECENT_EVALUATION_WINDOW = 200;
+const WARNING_RECENT_TRIGGER_COUNT = 140;
+const RISK_RECENT_TRIGGER_COUNT = 160;
+const COLD_SPOT_RECENT_TRIGGER_COUNT = 120;
+const RAPID_RISE_ELEVATION_DELTA_C = 1.0;
+const RAPID_RISE_DELTA_C = 0.75;
+const SUSTAINED_SEVERE_ELEVATION_DELTA_C = 1.75;
 
 type SmoothedReading = {
   source: StoredReading;
   temperature_c: number;
 };
+
+type TemperatureAlertKind =
+  | "cold_spot"
+  | "inflammation_warning"
+  | "inflammation_risk";
 
 export type TemperatureHeuristicResult = {
   device_id: string;
@@ -26,12 +42,18 @@ export type TemperatureHeuristicResult = {
   rebound_rate_c_per_hour: number | null;
   rebound_reading_count: number;
   severity: AlertSeverity | null;
+  alert_kind: TemperatureAlertKind | null;
   thresholds: {
     min_rebound_readings: number;
     cold_spot_delta_c: number;
     inflammation_delta_c: number;
     rebound_rate_c_per_hour: number;
   };
+};
+
+export type TemperatureHeuristicTimelineResult = {
+  has_warning: boolean;
+  has_risk: boolean;
 };
 
 export async function evaluateReadingAndPersistAlert(
@@ -54,34 +76,146 @@ export async function evaluateReadingAndPersistAlert(
   return result;
 }
 
+export function evaluateTemperatureHeuristicTimeline(
+  readings: StoredReading[],
+  settings: DeviceAlertSettings,
+): TemperatureHeuristicTimelineResult {
+  if (settings.baseline_temperature_c === null) {
+    return { has_warning: false, has_risk: false };
+  }
+
+  const orderedReadings = [...readings].sort(compareReadings);
+  const movingWindow: StoredReading[] = [];
+  let movingSum = 0;
+  let hasWarning = false;
+  let hasRisk = false;
+
+  const recentSmoothed: Array<
+    SmoothedReading & {
+      above05: boolean;
+      aboveRapidRisk: boolean;
+      aboveSevereRisk: boolean;
+      cold: boolean;
+    }
+  > = [];
+  let recentAbove05Count = 0;
+  let recentAboveRapidRiskCount = 0;
+  let recentAboveSevereRiskCount = 0;
+  let recentColdCount = 0;
+
+  for (const reading of orderedReadings) {
+    if (
+      reading.temperature_c < PLAUSIBLE_MIN_TEMPERATURE_C ||
+      reading.temperature_c > PLAUSIBLE_MAX_TEMPERATURE_C
+    ) {
+      continue;
+    }
+
+    movingWindow.push(reading);
+    movingSum += reading.temperature_c;
+
+    if (movingWindow.length > MOVING_AVERAGE_WINDOW) {
+      const removed = movingWindow.shift()!;
+      movingSum -= removed.temperature_c;
+    }
+
+    if (movingWindow.length < MOVING_AVERAGE_WINDOW) {
+      continue;
+    }
+
+    const temperatureC = movingSum / MOVING_AVERAGE_WINDOW;
+    const smoothed = {
+      source: reading,
+      temperature_c: temperatureC,
+      above05:
+        temperatureC - settings.baseline_temperature_c >
+        settings.inflammation_delta_c,
+      aboveRapidRisk:
+        temperatureC - settings.baseline_temperature_c >=
+        RAPID_RISE_ELEVATION_DELTA_C,
+      aboveSevereRisk:
+        temperatureC - settings.baseline_temperature_c >=
+        SUSTAINED_SEVERE_ELEVATION_DELTA_C,
+      cold:
+        settings.baseline_temperature_c - temperatureC >=
+        settings.cold_spot_delta_c,
+    };
+
+    recentSmoothed.push(smoothed);
+    if (smoothed.above05) recentAbove05Count += 1;
+    if (smoothed.aboveRapidRisk) recentAboveRapidRiskCount += 1;
+    if (smoothed.aboveSevereRisk) recentAboveSevereRiskCount += 1;
+    if (smoothed.cold) recentColdCount += 1;
+
+    if (recentSmoothed.length > RECENT_EVALUATION_WINDOW) {
+      const removed = recentSmoothed.shift()!;
+      if (removed.above05) recentAbove05Count -= 1;
+      if (removed.aboveRapidRisk) recentAboveRapidRiskCount -= 1;
+      if (removed.aboveSevereRisk) recentAboveSevereRiskCount -= 1;
+      if (removed.cold) recentColdCount -= 1;
+    }
+
+    if (recentSmoothed.length < RECENT_EVALUATION_WINDOW) {
+      continue;
+    }
+
+    const firstRecent = recentSmoothed[0]!;
+    const latestRecent = recentSmoothed[recentSmoothed.length - 1]!;
+    const recentTrendC =
+      latestRecent.temperature_c - firstRecent.temperature_c;
+
+    if (recentColdCount >= COLD_SPOT_RECENT_TRIGGER_COUNT) {
+      hasWarning = true;
+    }
+
+    if (
+      recentAbove05Count >= WARNING_RECENT_TRIGGER_COUNT &&
+      recentTrendC > 0
+    ) {
+      hasWarning = true;
+    }
+
+    const hasSustainedSevereElevation =
+      recentAboveSevereRiskCount >= RISK_RECENT_TRIGGER_COUNT;
+    const hasRapidSmoothedRise =
+      recentAboveRapidRiskCount >= RISK_RECENT_TRIGGER_COUNT &&
+      recentTrendC >= RAPID_RISE_DELTA_C;
+
+    if (
+      hasSustainedSevereElevation ||
+      hasRapidSmoothedRise
+    ) {
+      hasRisk = true;
+    }
+  }
+
+  return { has_warning: hasWarning, has_risk: hasRisk };
+}
+
 export function evaluateTemperatureHeuristic(
   readings: StoredReading[],
   settings: DeviceAlertSettings,
 ): TemperatureHeuristicResult {
-  const orderedReadings = [...readings].sort((left, right) => {
-    if (left.timestamp !== right.timestamp) {
-      return left.timestamp - right.timestamp;
-    }
-
-    if (left.created_at !== right.created_at) {
-      return left.created_at.localeCompare(right.created_at);
-    }
-
-    return left.id.localeCompare(right.id);
-  });
+  const orderedReadings = [...readings].sort(compareReadings);
   const plausibleReadings = orderedReadings.filter(
     (reading) =>
       reading.temperature_c >= PLAUSIBLE_MIN_TEMPERATURE_C &&
       reading.temperature_c <= PLAUSIBLE_MAX_TEMPERATURE_C,
   );
-  const smoothedReadings = buildMovingAverageReadings(plausibleReadings, MOVING_AVERAGE_WINDOW);
+  const smoothedReadings = buildMovingAverageReadings(
+    plausibleReadings,
+    MOVING_AVERAGE_WINDOW,
+  );
 
   const latestReading = plausibleReadings[plausibleReadings.length - 1] ?? null;
-  const latestSmoothedReading = smoothedReadings[smoothedReadings.length - 1] ?? null;
+  const latestSmoothedReading =
+    smoothedReadings[smoothedReadings.length - 1] ?? null;
   const baselineTemperatureC = settings.baseline_temperature_c;
-  const coldSpotReading = getSustainedColdSpotReading(smoothedReadings, settings);
-  const recentSmoothed = smoothedReadings.slice(-10);
-  const recentPlausibleReadings = plausibleReadings.slice(-10);
+  const coldSpotReading = getSustainedColdSpotReading(
+    smoothedReadings,
+    settings,
+  );
+  const recentSmoothed = smoothedReadings.slice(-RECENT_EVALUATION_WINDOW);
 
   let latestBelowBaselineC: number | null = null;
   let latestAboveBaselineC: number | null = null;
@@ -91,6 +225,7 @@ export function evaluateTemperatureHeuristic(
   let reboundRateCPerHour: number | null = null;
   let reboundReadingCount = 0;
   let severity: AlertSeverity | null = null;
+  let alertKind: TemperatureAlertKind | null = null;
 
   if (baselineTemperatureC !== null && latestReading && latestSmoothedReading) {
     latestBelowBaselineC = Math.max(
@@ -109,43 +244,59 @@ export function evaluateTemperatureHeuristic(
     const hasSustainedColdSpot = coldSpotReading !== null;
     if (hasSustainedColdSpot) {
       severity = "warning";
+      alertKind = "cold_spot";
     }
 
-    if (recentSmoothed.length >= 10) {
+    if (recentSmoothed.length >= RECENT_EVALUATION_WINDOW) {
       const smoothedAbove05Count = recentSmoothed.filter(
-        (reading) => reading.temperature_c - baselineTemperatureC > 0.5,
+        (reading) =>
+          reading.temperature_c - baselineTemperatureC >
+          settings.inflammation_delta_c,
       ).length;
       const smoothedRecentTrend =
-        recentSmoothed[recentSmoothed.length - 1]!.temperature_c - recentSmoothed[0]!.temperature_c;
+        recentSmoothed[recentSmoothed.length - 1]!.temperature_c -
+        recentSmoothed[0]!.temperature_c;
       const isInflammationWarning =
-        smoothedAbove05Count >= 8 && smoothedRecentTrend > 0;
+        smoothedAbove05Count >= WARNING_RECENT_TRIGGER_COUNT &&
+        smoothedRecentTrend > 0;
 
       if (isInflammationWarning) {
         severity = "warning";
+        alertKind = "inflammation_warning";
       }
-    }
 
-    if (recentPlausibleReadings.length >= 10) {
-      const readingsAbove10Count = recentPlausibleReadings.filter(
-        (reading) => reading.temperature_c - baselineTemperatureC > 1.0,
+      const smoothedAboveRapidRiskCount = recentSmoothed.filter(
+        (reading) =>
+          reading.temperature_c - baselineTemperatureC >=
+          RAPID_RISE_ELEVATION_DELTA_C,
+      ).length;
+      const smoothedAboveSevereRiskCount = recentSmoothed.filter(
+        (reading) =>
+          reading.temperature_c - baselineTemperatureC >=
+          SUSTAINED_SEVERE_ELEVATION_DELTA_C,
       ).length;
       const overallRiseC =
-        recentPlausibleReadings[recentPlausibleReadings.length - 1]!.temperature_c -
-        recentPlausibleReadings[0]!.temperature_c;
-      const isInflammationRisk = readingsAbove10Count >= 8 && overallRiseC >= 1.0;
+        recentSmoothed[recentSmoothed.length - 1]!.temperature_c -
+        recentSmoothed[0]!.temperature_c;
+      const hasSustainedSevereElevation =
+        smoothedAboveSevereRiskCount >= RISK_RECENT_TRIGGER_COUNT;
+      const hasRapidSmoothedRise =
+        smoothedAboveRapidRiskCount >= RISK_RECENT_TRIGGER_COUNT &&
+        overallRiseC >= RAPID_RISE_DELTA_C;
 
       reboundDeltaC = overallRiseC;
       const reboundElapsedMs =
-        recentPlausibleReadings[recentPlausibleReadings.length - 1]!.timestamp -
-        recentPlausibleReadings[0]!.timestamp;
-      reboundReadingCount = recentPlausibleReadings.length;
+        recentSmoothed[recentSmoothed.length - 1]!.source.timestamp -
+        recentSmoothed[0]!.source.timestamp;
+      reboundReadingCount = recentSmoothed.length;
       if (reboundElapsedMs > 0) {
         reboundElapsedMinutes = reboundElapsedMs / 60000;
         reboundRateCPerHour = (overallRiseC * 3600000) / reboundElapsedMs;
       }
 
-      if (isInflammationRisk) {
+      if (hasSustainedSevereElevation || hasRapidSmoothedRise) {
         severity = "risk";
+        alertKind = "inflammation_risk";
       }
     }
   }
@@ -165,6 +316,7 @@ export function evaluateTemperatureHeuristic(
     rebound_rate_c_per_hour: reboundRateCPerHour,
     rebound_reading_count: reboundReadingCount,
     severity,
+    alert_kind: alertKind,
     thresholds: {
       min_rebound_readings: settings.min_rebound_readings,
       cold_spot_delta_c: settings.cold_spot_delta_c,
@@ -187,12 +339,12 @@ function buildAlertRecord(
       return null;
     }
 
-    const isInflammationWarning = result.cold_spot_reading === null;
+    const isInflammationWarning = result.alert_kind !== "cold_spot";
     return {
       device_id: result.device_id,
       reading_id: readingId,
       severity: "warning",
-      kind: isInflammationWarning ? "inflammation_warning" : "cold_spot",
+      kind: result.alert_kind ?? "inflammation_warning",
       message: isInflammationWarning
         ? `Inflammation warning detected: sustained temperatures are above baseline ${result.baseline_temperature_c.toFixed(
             2,
@@ -220,7 +372,7 @@ function buildAlertRecord(
     device_id: result.device_id,
     reading_id: readingId,
     severity: "risk",
-    kind: "inflammation_risk",
+    kind: result.alert_kind ?? "inflammation_risk",
     message: `Inflammation risk detected: sustained elevated readings exceed +1.0 C over baseline with an overall rise of ${(
       result.rebound_delta_c ?? 0
     ).toFixed(2)} C.`,
@@ -255,8 +407,21 @@ function getColdSpotCandidates(
   return readings.filter(
     (reading) =>
       settings.baseline_temperature_c !== null &&
-      settings.baseline_temperature_c - reading.temperature_c >= settings.cold_spot_delta_c,
+      settings.baseline_temperature_c - reading.temperature_c >=
+        settings.cold_spot_delta_c,
   );
+}
+
+function compareReadings(left: StoredReading, right: StoredReading): number {
+  if (left.timestamp !== right.timestamp) {
+    return left.timestamp - right.timestamp;
+  }
+
+  if (left.created_at !== right.created_at) {
+    return left.created_at.localeCompare(right.created_at);
+  }
+
+  return left.id.localeCompare(right.id);
 }
 
 function getColdestReading(readings: StoredReading[]): StoredReading | null {
@@ -277,7 +442,8 @@ function buildMovingAverageReadings(
   for (let index = windowSize - 1; index < readings.length; index += 1) {
     const window = readings.slice(index - (windowSize - 1), index + 1);
     const averageTemperatureC =
-      window.reduce((sum, reading) => sum + reading.temperature_c, 0) / window.length;
+      window.reduce((sum, reading) => sum + reading.temperature_c, 0) /
+      window.length;
     smoothed.push({
       source: readings[index]!,
       temperature_c: averageTemperatureC,
@@ -290,29 +456,25 @@ function getSustainedColdSpotReading(
   smoothedReadings: SmoothedReading[],
   settings: DeviceAlertSettings,
 ): StoredReading | null {
-  const coldSpotIndexes = getColdSpotCandidates(smoothedReadings, settings).map((candidate) =>
-    smoothedReadings.findIndex((smoothed) => smoothed.source.id === candidate.source.id),
-  );
-  if (coldSpotIndexes.length < 2) {
+  const recentSmoothed = smoothedReadings.slice(-RECENT_EVALUATION_WINDOW);
+  if (recentSmoothed.length < RECENT_EVALUATION_WINDOW) {
     return null;
   }
 
-  const sustainedCandidates = coldSpotIndexes
-    .filter((index) => {
-      const hasPreviousNeighbor = coldSpotIndexes.includes(index - 1);
-      const hasNextNeighbor = coldSpotIndexes.includes(index + 1);
-      return hasPreviousNeighbor || hasNextNeighbor;
-    })
-    .map((index) => smoothedReadings[index]!)
-    .filter(Boolean);
-
-  if (sustainedCandidates.length === 0) {
+  const sustainedCandidates = getColdSpotCandidates(
+    recentSmoothed,
+    settings,
+  );
+  if (sustainedCandidates.length < COLD_SPOT_RECENT_TRIGGER_COUNT) {
     return null;
   }
 
   const coldest = sustainedCandidates.reduce<SmoothedReading | null>(
     (currentColdest, candidate) => {
-      if (!currentColdest || candidate.temperature_c < currentColdest.temperature_c) {
+      if (
+        !currentColdest ||
+        candidate.temperature_c < currentColdest.temperature_c
+      ) {
         return candidate;
       }
       return currentColdest;

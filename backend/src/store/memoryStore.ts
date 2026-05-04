@@ -9,7 +9,7 @@ import { ReadingQueryOptions, ReadingsStore } from "./readingsStore";
 
 const PLAUSIBLE_MIN_TEMPERATURE_C = 30;
 const PLAUSIBLE_MAX_TEMPERATURE_C = 45;
-const BASELINE_SAMPLE_SIZE = 20;
+const BASELINE_SAMPLE_SIZE = 400;
 
 class MemoryStore implements ReadingsStore {
   private readonly patients = new Map<string, PatientRecord>();
@@ -114,9 +114,9 @@ class MemoryStore implements ReadingsStore {
       return device;
     }
 
-    const computedBaselineTemperatureC =
-      baselineCandidates.reduce((sum, reading) => sum + reading.temperature_c, 0) /
-      baselineCandidates.length;
+    const computedBaselineTemperatureC = computeTrimmedMeanTemperature(
+      baselineCandidates,
+    );
 
     const updatedDevice: DeviceRecord = {
       ...device,
@@ -318,3 +318,18 @@ class MemoryStore implements ReadingsStore {
 }
 
 export const memoryStore = new MemoryStore();
+
+function computeTrimmedMeanTemperature(readings: StoredReading[]): number {
+  const temperatures = readings
+    .map((reading) => reading.temperature_c)
+    .sort((left, right) => left - right);
+  const trimCount = Math.floor(temperatures.length * 0.1);
+  const trimmedTemperatures = temperatures.slice(
+    trimCount,
+    temperatures.length - trimCount,
+  );
+  return (
+    trimmedTemperatures.reduce((sum, temperature) => sum + temperature, 0) /
+    trimmedTemperatures.length
+  );
+}

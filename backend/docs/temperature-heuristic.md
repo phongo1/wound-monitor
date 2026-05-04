@@ -33,10 +33,11 @@ Relevant settings:
 Reading pre-processing rules:
 
 - Ignore impossible sensor values outside `30 C` to `45 C`.
-- Use a 5-reading moving average for alert evaluation.
-- If baseline is not set, estimate baseline from the first 20 plausible readings.
+- Use a 20-reading moving average for alert evaluation.
+- If baseline is not set, estimate baseline from a 10% trimmed mean of the first 400 plausible readings.
+- These count-based windows assume the firmware sends a reading about every 3 seconds.
 
-If a device has no `device_alert_settings` row, the backend uses defaults from [defaults.ts](/Users/phongle/dev/smart-bandage/backend/src/alerting/defaults.ts).
+If a device has no `device_alert_settings` row, the backend uses defaults from [defaults.ts](../src/alerting/defaults.ts).
 
 If a device has no `baseline_temperature_c`, the heuristic returns no alert.
 
@@ -44,15 +45,15 @@ If a device has no `baseline_temperature_c`, the heuristic returns no alert.
 
 `warning` can be raised by either of these:
 
-- **Cold spot warning**: a cold-spot condition is present in neighboring smoothed readings (not a single isolated drop).
-- **Inflammation warning**: at least `8` of the last `10` smoothed readings are above baseline by `+0.5 C`, and recent trend is positive.
+- **Cold spot warning**: at least `120` of the last `200` smoothed readings are below baseline by the cold-spot threshold.
+- **Inflammation warning**: at least `140` of the last `200` smoothed readings are above baseline by `+0.5 C`, and recent trend is positive.
 
 ## Risk Rule
 
-`risk` is raised when both are true:
+`risk` is raised when either rapid rise or sustained severe elevation is present:
 
-- at least `8` of the last `10` plausible readings are above baseline by `+1.0 C`
-- overall rise across that 10-reading window is at least `+1.0 C`
+- **Rapid rise**: at least `160` of the last `200` smoothed readings are above baseline by `+1.0 C`, and overall rise across that window is at least `+0.75 C`.
+- **Sustained severe elevation**: at least `160` of the last `200` smoothed readings are above baseline by `+1.75 C`.
 
 ## Windowing
 
@@ -69,10 +70,8 @@ That means:
 Within the active window:
 
 - the backend finds the **latest** reading
-- it finds the **coldest** reading that qualifies as a cold spot
-- for risk, it only uses cold spots that happened **before** the latest reading
-
-This prevents a below-baseline latest reading from being treated as both the cold spot and the rebound target.
+- it builds smoothed readings from plausible values
+- it evaluates alert rules against the latest smoothed readings
 
 ## Alert Types
 
@@ -90,11 +89,11 @@ Severity mapping:
 
 ## Current Defaults
 
-Current defaults from [defaults.ts](/smart-bandage/backend/src/alerting/defaults.ts):
+Current defaults from [defaults.ts](../src/alerting/defaults.ts):
 
 - `window_minutes = 120`
 - `min_rebound_readings = 2`
-- `cold_spot_delta_c = 0.5`
+- `cold_spot_delta_c = 1.5`
 - `inflammation_delta_c = 0.5`
 - `rebound_rate_c_per_hour = 0.6`
 
@@ -104,6 +103,6 @@ These are product defaults, not clinical validation.
 
 Main logic lives in:
 
-- [temperatureAlerts.ts](/smart-bandage/backend/src/services/temperatureAlerts.ts)
-- [supabaseStore.ts](/smart-bandage/backend/src/store/supabaseStore.ts)
-- [schema.sql](/smart-bandage/backend/supabase/schema.sql)
+- [temperatureAlerts.ts](../src/services/temperatureAlerts.ts)
+- [supabaseStore.ts](../src/store/supabaseStore.ts)
+- [schema.sql](../supabase/schema.sql)

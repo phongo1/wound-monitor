@@ -8,7 +8,7 @@ import { ReadingQueryOptions, ReadingsStore } from "./readingsStore";
 
 const PLAUSIBLE_MIN_TEMPERATURE_C = 30;
 const PLAUSIBLE_MAX_TEMPERATURE_C = 45;
-const BASELINE_SAMPLE_SIZE = 20;
+const BASELINE_SAMPLE_SIZE = 400;
 
 export class SupabaseStore implements ReadingsStore {
   constructor(private readonly config: SupabaseConfig) {}
@@ -252,9 +252,9 @@ export class SupabaseStore implements ReadingsStore {
       return device;
     }
 
-    const computedBaselineTemperatureC =
-      baselineCandidates.reduce((sum, reading) => sum + reading.temperature_c, 0) /
-      baselineCandidates.length;
+    const computedBaselineTemperatureC = computeTrimmedMeanTemperature(
+      baselineCandidates,
+    );
 
     const updatedRows = await this.requestTable<DeviceRecord[]>(
       this.config.devicesTable,
@@ -662,4 +662,19 @@ function mapPatientRow(
     device_id: device?.device_id ?? null,
     baseline_temperature_c: device?.baseline_temperature_c ?? null,
   };
+}
+
+function computeTrimmedMeanTemperature(readings: StoredReading[]): number {
+  const temperatures = readings
+    .map((reading) => reading.temperature_c)
+    .sort((left, right) => left - right);
+  const trimCount = Math.floor(temperatures.length * 0.1);
+  const trimmedTemperatures = temperatures.slice(
+    trimCount,
+    temperatures.length - trimCount,
+  );
+  return (
+    trimmedTemperatures.reduce((sum, temperature) => sum + temperature, 0) /
+    trimmedTemperatures.length
+  );
 }
