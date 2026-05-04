@@ -11,7 +11,7 @@ This backend uses a moving-average based wound temperature heuristic:
 The model assumes these temperature patterns are meaningful:
 
 - A sustained drop below baseline can indicate a local cold spot.
-- Sustained elevations above baseline can indicate inflammation risk.
+- Sustained elevations above baseline can indicate potential inflammation-related activity.
 - Isolated spikes/dropouts should be suppressed by smoothing and persistence rules.
 
 ## Inputs
@@ -25,10 +25,8 @@ The heuristic depends on:
 Relevant settings:
 
 - `window_minutes`
-- `min_rebound_readings`
 - `cold_spot_delta_c`
 - `inflammation_delta_c`
-- `rebound_rate_c_per_hour`
 
 Reading pre-processing rules:
 
@@ -50,9 +48,9 @@ If a device has no `baseline_temperature_c`, the heuristic returns no alert.
 
 ## Risk Rule
 
-`risk` is raised when either rapid rise or sustained severe elevation is present:
+`risk` is raised when stronger or more persistent elevation is present:
 
-- **Rapid rise**: at least `160` of the last `200` smoothed readings are above baseline by `+1.0 C`, and overall rise across that window is at least `+0.75 C`.
+- **Sustained elevated rising trend**: at least `160` of the last `200` smoothed readings are above baseline by `+1.0 C`, with an overall positive rise across that window.
 - **Sustained severe elevation**: at least `160` of the last `200` smoothed readings are above baseline by `+1.75 C`.
 
 ## Windowing
