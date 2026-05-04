@@ -25,8 +25,8 @@ const expectations = {
   normal: "none",
   transient_cold_spot: "none",
   cold_spot: "warning_only",
-  inflammation: "warning_only",
-  sustained_inflammation: "risk",
+  mild_sustained_elevation: "warning_only",
+  strong_sustained_elevation: "risk",
 };
 
 function getDirs(externalOnly) {

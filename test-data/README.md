@@ -11,8 +11,8 @@ The `external/` dataset is organized into generated pattern categories, with 50 
 - Normal (stable baseline)
 - Transient Cold Spot (non-sustained cooling)
 - Cold Spot (sustained localized cooling)
-- Inflammation (sustained temperature elevation)
-- Sustained Inflammation (strong sustained elevation)
+- Mild Sustained Elevation (sustained mild temperature elevation)
+- Strong Sustained Elevation (strong sustained temperature elevation)
 
 Each CSV has columns: `timestamp,temperature_c`.
 
