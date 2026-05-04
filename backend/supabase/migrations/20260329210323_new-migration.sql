@@ -1,0 +1,2 @@
+-- Historical migration already applied on the linked Supabase project.
+-- Kept here so backend/supabase migration history matches the remote history.

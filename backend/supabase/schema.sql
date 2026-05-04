@@ -81,14 +81,22 @@ create table if not exists public.readings (
   device_id text not null,
   temperature_c double precision not null check (temperature_c > 0 and temperature_c < 100),
   timestamp bigint not null check (timestamp > 0),
+  sequence_number bigint,
   created_at timestamptz not null default timezone('utc', now())
 );
+
+alter table public.readings
+  add column if not exists sequence_number bigint;
 
 create index if not exists readings_device_timestamp_idx
   on public.readings (device_id, timestamp desc);
 
 create index if not exists readings_timestamp_idx
   on public.readings (timestamp desc);
+
+create unique index if not exists readings_device_sequence_number_idx
+  on public.readings (device_id, sequence_number)
+  where sequence_number is not null;
 
 create table if not exists public.alerts (
   id uuid primary key default gen_random_uuid(),
