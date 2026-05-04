@@ -6,7 +6,7 @@
 
 const char* ssid = "mineplex";
 const char* password = "ezpassword123";
-const char* backendUrl = "http://10.0.0.228:3000/api/readings";
+const char* backendUrl = "http://10.0.0.37:3000/api/readings";
 const char* ntpServer = "pool.ntp.org";
 
 TMP117 sensor;
