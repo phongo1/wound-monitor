@@ -17,6 +17,7 @@ unsigned long lastSendMs = 0;
 const unsigned long SEND_INTERVAL_MS = 5000;
 bool hasEpochOffset = false;
 int64_t epochOffsetMs = 0;
+uint32_t readingSequenceNumber = 0;
 
 bool waitForTimeSync(unsigned long timeoutMs = 15000) {
   unsigned long start = millis();
@@ -69,6 +70,15 @@ void loop() {
 
   uint64_t timestamp = currentEpochMillis();
 
-  bool ok = sendReading(BACKEND_BASE_URL, DEVICE_ID, tempC, timestamp);
-  Serial.println(ok ? "Reading sent" : "Failed to send reading");
+  readingSequenceNumber++;
+  bool ok = sendReading(
+    BACKEND_BASE_URL,
+    DEVICE_ID,
+    tempC,
+    timestamp,
+    readingSequenceNumber
+  );
+
+  Serial.print(ok ? "Reading sent, seq=" : "Failed to send reading, seq=");
+  Serial.println(readingSequenceNumber);
 }

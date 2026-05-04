@@ -13,6 +13,7 @@ TMP117 sensor;
 const char* deviceId = "esp32-thing-plus-1";
 bool hasEpochOffset = false;
 int64_t epochOffsetMs = 0;
+uint32_t readingSequenceNumber = 0;
 
 bool waitForTimeSync(unsigned long timeoutMs = 15000) {
   unsigned long start = millis();
@@ -81,6 +82,7 @@ void loop() {
   float tempF = sensor.readTempF();
 
   uint64_t timestamp = currentEpochMillis();
+  readingSequenceNumber++;
 
   HTTPClient http;
   http.begin(backendUrl);
@@ -92,7 +94,8 @@ void loop() {
   String body = "{";
   body += "\"device_id\":\"" + String(deviceId) + "\",";
   body += "\"temperature_c\":" + String(tempC, 2) + ",";
-  body += "\"timestamp\":" + String(timestampBuffer);
+  body += "\"timestamp\":" + String(timestampBuffer) + ",";
+  body += "\"sequence_number\":" + String(readingSequenceNumber);
   body += "}";
 
   Serial.print("TempF: ");
@@ -100,7 +103,9 @@ void loop() {
   Serial.print(" | TempC: ");
   Serial.print(tempC);
   Serial.print(" | timestamp_ms: ");
-  Serial.println(timestampBuffer);
+  Serial.print(timestampBuffer);
+  Serial.print(" | seq: ");
+  Serial.println(readingSequenceNumber);
 
   int httpResponseCode = http.POST(body);
 

@@ -18,7 +18,13 @@ bool wifiConnect(const char* ssid, const char* password, unsigned long timeoutMs
   return true;
 }
 
-bool sendReading(const char* backendUrl, const char* deviceId, float temperatureC, uint64_t timestamp) {
+bool sendReading(
+  const char* backendUrl,
+  const char* deviceId,
+  float temperatureC,
+  uint64_t timestamp,
+  uint32_t sequenceNumber
+) {
   if (WiFi.status() != WL_CONNECTED) {
     return false;
   }
@@ -34,7 +40,8 @@ bool sendReading(const char* backendUrl, const char* deviceId, float temperature
 
   String payload = "{\"device_id\":\"" + String(deviceId) +
                    "\",\"temperature_c\":" + String(temperatureC, 2) +
-                   ",\"timestamp\":" + String(timestampBuffer) + "}";
+                   ",\"timestamp\":" + String(timestampBuffer) +
+                   ",\"sequence_number\":" + String(sequenceNumber) + "}";
 
   int statusCode = http.POST(payload);
 

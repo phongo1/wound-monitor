@@ -13,7 +13,8 @@ This folder is a minimal skeleton for SparkFun Thing Plus ESP32 WROOM firmware.
 {
   "device_id": "bandage_01",
   "temperature_c": 36.7,
-  "timestamp": 1712345678
+  "timestamp": 1712345678000,
+  "sequence_number": 1
 }
 ```
 
