@@ -9,6 +9,7 @@ import { ReadingQueryOptions, ReadingsStore } from "./readingsStore";
 const PLAUSIBLE_MIN_TEMPERATURE_C = 30;
 const PLAUSIBLE_MAX_TEMPERATURE_C = 45;
 const BASELINE_SAMPLE_SIZE = 400;
+const SUPABASE_MAX_PAGE_SIZE = 20000;
 
 export class SupabaseStore implements ReadingsStore {
   constructor(private readonly config: SupabaseConfig) {}
@@ -470,16 +471,20 @@ export class SupabaseStore implements ReadingsStore {
     deviceId: string,
     options?: ReadingQueryOptions,
   ): Promise<StoredReading[]> {
+    if (options?.limit !== undefined) {
+      return this.limitedHistoryForDevice(deviceId, {
+        ...options,
+        limit: options.limit,
+      });
+    }
+
     const searchParams = new URLSearchParams();
     searchParams.set(
       "select",
       "id,device_id,temperature_c,timestamp,sequence_number,created_at",
     );
     searchParams.set("device_id", `eq.${deviceId}`);
-    searchParams.set(
-      "order",
-      options?.limit === undefined ? "timestamp.asc" : "timestamp.desc",
-    );
+    searchParams.set("order", "timestamp.asc");
 
     if (
       options?.sinceTimestamp !== undefined &&
@@ -495,21 +500,66 @@ export class SupabaseStore implements ReadingsStore {
       searchParams.set("timestamp", `lte.${options.untilTimestamp}`);
     }
 
-    if (options?.limit !== undefined) {
-      searchParams.set("limit", String(options.limit));
-    }
-
-    const rows = await this.requestTable<StoredReading[]>(
+    return this.requestTable<StoredReading[]>(
       this.config.readingsTable,
       this.searchParamsToQuery(searchParams),
       {
         method: "GET",
       },
     );
+  }
 
-    return options?.limit === undefined
-      ? rows
-      : rows.sort((left, right) => left.timestamp - right.timestamp);
+  private async limitedHistoryForDevice(
+    deviceId: string,
+    options: ReadingQueryOptions & { limit: number },
+  ): Promise<StoredReading[]> {
+    const rows: StoredReading[] = [];
+
+    while (rows.length < options.limit) {
+      const pageSize = Math.min(
+        SUPABASE_MAX_PAGE_SIZE,
+        options.limit - rows.length,
+      );
+      const searchParams = new URLSearchParams();
+      searchParams.set(
+        "select",
+        "id,device_id,temperature_c,timestamp,sequence_number,created_at",
+      );
+      searchParams.set("device_id", `eq.${deviceId}`);
+      searchParams.set("order", "timestamp.desc");
+      searchParams.set("limit", String(pageSize));
+      searchParams.set("offset", String(rows.length));
+
+      if (
+        options.sinceTimestamp !== undefined &&
+        options.untilTimestamp !== undefined
+      ) {
+        searchParams.set(
+          "and",
+          `(timestamp.gte.${options.sinceTimestamp},timestamp.lte.${options.untilTimestamp})`,
+        );
+      } else if (options.sinceTimestamp !== undefined) {
+        searchParams.set("timestamp", `gte.${options.sinceTimestamp}`);
+      } else if (options.untilTimestamp !== undefined) {
+        searchParams.set("timestamp", `lte.${options.untilTimestamp}`);
+      }
+
+      const page = await this.requestTable<StoredReading[]>(
+        this.config.readingsTable,
+        this.searchParamsToQuery(searchParams),
+        {
+          method: "GET",
+        },
+      );
+
+      rows.push(...page);
+
+      if (page.length < pageSize) {
+        break;
+      }
+    }
+
+    return rows.sort((left, right) => left.timestamp - right.timestamp);
   }
 
   async getAlertSettings(deviceId: string): Promise<DeviceAlertSettings> {
